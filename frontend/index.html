@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Auralis decentralized music streaming platform">
+<title>Auralis — Music Without Borders</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<div class="bg-glow"></div>
+
+<header class="nav">
+  <a class="logo" href="#"><span class="logo-mark">A</span><span>AURALIS</span></a>
+  <nav><a class="active" href="#discover">Discover</a><a href="#library">Library</a><a href="#artists">Artists</a><a href="#web3">Web3</a></nav>
+  <div class="nav-right"><button class="search" id="searchBtn">⌕ Search</button><button class="wallet" id="walletBtn">Connect Wallet</button></div>
+</header>
+
+<main>
+<section class="hero" id="discover">
+  <div class="hero-copy">
+    <span class="eyebrow">THE OPEN MUSIC NETWORK</span>
+    <h1>Listen.<br><i>Own.</i> Discover.</h1>
+    <p>Auralis connects artists and listeners through music, transparent ownership and an open digital economy.</p>
+    <div class="hero-buttons"><button class="primary" onclick="document.querySelector('#trending').scrollIntoView()">Explore music <span>→</span></button><button class="secondary" onclick="document.querySelector('#web3').scrollIntoView()">How Web3 works</button></div>
+    <div class="hero-meta"><span><b id="streamCount">--</b> streams</span><span><b id="artistCount">--</b> artists</span><span><b>100%</b> artist-first</span></div>
+  </div>
+  <div class="hero-art">
+    <div class="orb orb1"></div><div class="orb orb2"></div>
+    <div class="vinyl"><div class="record"><div class="label">A</div></div></div>
+    <div class="floating-card"><span>NOW TRENDING</span><strong>Midnight Drive</strong><small>Neon District · Synthwave</small></div>
+  </div>
+</section>
+
+<section id="trending" class="section">
+  <div class="section-head"><div><span class="eyebrow">DISCOVER</span><h2>Trending now</h2></div><button class="text-btn">View all →</button></div>
+  <div class="track-grid" id="tracks"></div>
+</section>
+
+<section id="artists" class="section">
+  <div class="section-head"><div><span class="eyebrow">THE CREATORS</span><h2>Artists on Auralis</h2></div></div>
+  <div class="artist-grid" id="artistGrid"></div>
+</section>
+
+<section id="library" class="section">
+  <div class="section-head"><div><span class="eyebrow">CURATED FOR YOU</span><h2>Collections</h2></div></div>
+  <div class="playlist-grid" id="playlists"></div>
+</section>
+
+<section id="web3" class="web3-section">
+  <div><span class="eyebrow">MUSIC × WEB3</span><h2>What changes when<br>music becomes <i>ownable?</i></h2><p>Artists publish verifiable releases, listeners can collect digital editions, and the platform keeps ownership data transparent.</p><button class="primary" id="walletBtn2">Connect wallet →</button></div>
+  <div class="steps">
+    <div><b>01</b><span>Connect</span><small>Link your wallet to your Auralis profile.</small></div>
+    <div><b>02</b><span>Listen</span><small>Stream music from independent creators.</small></div>
+    <div><b>03</b><span>Collect</span><small>Own digital editions of selected releases.</small></div>
+  </div>
+</section>
+</main>
+
+<div class="player">
+  <div class="player-track"><div class="mini-cover" id="miniCover">A</div><div><strong id="nowTitle">Select a track</strong><small id="nowArtist">Auralis</small></div></div>
+  <div class="controls"><button id="prev">◀</button><button class="play" id="play">▶</button><button id="next">▶</button><div class="progress"><div id="progressBar"></div></div><span id="time">0:00</span></div>
+  <div class="player-right"><span id="walletState">Wallet disconnected</span> <span>🔊</span></div>
+</div>
+
+<div class="toast" id="toast"></div>
+<script src="/app.js" defer></script>
+</body>
+</html>
