@@ -1,8 +1,14 @@
+```groovy
 pipeline {
     agent any
 
     tools {
         nodejs 'NodeJS-22'
+    }
+
+    environment {
+        APP_IMAGE = 'auralis-backend'
+        APP_VERSION = "${BUILD_NUMBER}"
     }
 
     stages {
@@ -16,14 +22,19 @@ pipeline {
         stage('Environment Check') {
             steps {
                 sh '''
-                    echo "Node version:"
+                    echo "===== Environment ====="
+
+                    echo "Node:"
                     node --version
 
-                    echo "NPM version:"
+                    echo "NPM:"
                     npm --version
 
-                    echo "Git version:"
+                    echo "Git:"
                     git --version
+
+                    echo "Docker:"
+                    docker --version
                 '''
             }
         }
@@ -49,6 +60,22 @@ pipeline {
                 dir('backend') {
                     sh 'npm run lint'
                 }
+            }
+        }
+
+        stage('Gitleaks Secret Scan') {
+            steps {
+                sh '''
+                    echo "===== Gitleaks Secret Scan ====="
+
+                    docker run --rm \
+                        -v "$WORKSPACE:/repo:ro" \
+                        zricethezav/gitleaks:latest \
+                        detect \
+                        --source=/repo \
+                        --no-banner \
+                        --exit-code 1
+                '''
             }
         }
 
@@ -79,6 +106,29 @@ pipeline {
                 )
             }
         }
+
+        stage('Docker Build') {
+            steps {
+                sh '''
+                    echo "===== Building Backend Image ====="
+
+                    docker build \
+                        -t ${APP_IMAGE}:${APP_VERSION} \
+                        -t ${APP_IMAGE}:latest \
+                        ./backend
+                '''
+            }
+        }
+
+        stage('Docker Image Check') {
+            steps {
+                sh '''
+                    echo "===== Docker Images ====="
+
+                    docker images ${APP_IMAGE}
+                '''
+            }
+        }
     }
 
     post {
@@ -99,3 +149,4 @@ pipeline {
         }
     }
 }
+```
