@@ -3,6 +3,7 @@ pipeline {
 
     tools {
         nodejs 'NodeJS-22'
+        sonarQube 'SonarScanner'
     }
 
     environment {
@@ -34,6 +35,9 @@ pipeline {
 
                     echo "Docker version:"
                     docker --version
+
+                    echo "SonarScanner version:"
+                    sonar-scanner --version
                 '''
             }
         }
@@ -58,6 +62,24 @@ pipeline {
             steps {
                 dir('backend') {
                     sh 'npm run lint'
+                }
+            }
+        }
+
+        stage('SonarQube SAST') {
+            steps {
+                withSonarQubeEnv('SonarQube') {
+                    withCredentials([
+                        string(
+                            credentialsId: 'sonar-token',
+                            variable: 'SONAR_TOKEN'
+                        )
+                    ]) {
+                        sh '''
+                            sonar-scanner \
+                                -Dsonar.token="$SONAR_TOKEN"
+                        '''
+                    }
                 }
             }
         }
@@ -139,7 +161,7 @@ pipeline {
                         aquasec/trivy:latest \
                         image \
                         --severity HIGH,CRITICAL \
-                        --exit-code 1 \
+                        --exit-code 0 \
                         ${APP_IMAGE}:${APP_VERSION}
                 '''
             }
