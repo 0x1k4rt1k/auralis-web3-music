@@ -7,7 +7,6 @@ pipeline {
 
     stages {
 
-
         stage('Checkout') {
             steps {
                 checkout scm
@@ -17,6 +16,8 @@ pipeline {
         stage('Install Dependencies') {
             steps {
                 dir('backend') {
+                    sh 'node --version'
+                    sh 'npm --version'
                     sh 'npm ci'
                 }
             }
@@ -40,6 +41,8 @@ pipeline {
 
         stage('OWASP Dependency-Check') {
             steps {
+                sh 'mkdir -p dependency-check-report'
+
                 dependencyCheck(
                     odcInstallation: 'OWASP-Dependency-Check',
                     additionalArguments: '--scan backend --format HTML --format XML --out dependency-check-report'
@@ -60,7 +63,10 @@ pipeline {
 
     post {
         always {
-            archiveArtifacts artifacts: 'dependency-check-report/*', allowEmptyArchive: true
+            archiveArtifacts(
+                artifacts: 'dependency-check-report/*',
+                allowEmptyArchive: true
+            )
         }
     }
 }
