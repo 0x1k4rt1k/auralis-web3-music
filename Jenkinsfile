@@ -71,10 +71,22 @@ pipeline {
                             variable: 'SONAR_TOKEN'
                         )
                     ]) {
-                        sh '''
-                            sonar-scanner \
-                                -Dsonar.token="$SONAR_TOKEN"
-                        '''
+                        script {
+                            def scannerHome = tool 'SonarScanner'
+
+                            sh """
+                                echo "===== SonarQube SAST ====="
+
+                                echo "SonarScanner location:"
+                                echo "${scannerHome}"
+
+                                echo "SonarScanner version:"
+                                ${scannerHome}/bin/sonar-scanner --version
+
+                                ${scannerHome}/bin/sonar-scanner \
+                                    -Dsonar.token="\$SONAR_TOKEN"
+                            """
+                        }
                     }
                 }
             }
