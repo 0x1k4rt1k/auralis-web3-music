@@ -21,18 +21,18 @@ pipeline {
         stage('Environment Check') {
             steps {
                 sh '''
-                    echo "===== Environment ====="
+                    echo "===== Environment Check ====="
 
-                    echo "Node:"
+                    echo "Node version:"
                     node --version
 
-                    echo "NPM:"
+                    echo "NPM version:"
                     npm --version
 
-                    echo "Git:"
+                    echo "Git version:"
                     git --version
 
-                    echo "Docker:"
+                    echo "Docker version:"
                     docker --version
                 '''
             }
@@ -109,7 +109,7 @@ pipeline {
         stage('Docker Build') {
             steps {
                 sh '''
-                    echo "===== Building Backend Image ====="
+                    echo "===== Docker Build ====="
 
                     docker build \
                         -t ${APP_IMAGE}:${APP_VERSION} \
@@ -122,9 +122,25 @@ pipeline {
         stage('Docker Image Check') {
             steps {
                 sh '''
-                    echo "===== Docker Images ====="
+                    echo "===== Docker Image Check ====="
 
                     docker images ${APP_IMAGE}
+                '''
+            }
+        }
+
+        stage('Trivy Container Scan') {
+            steps {
+                sh '''
+                    echo "===== Trivy Container Security Scan ====="
+
+                    docker run --rm \
+                        -v /var/run/docker.sock:/var/run/docker.sock \
+                        aquasec/trivy:latest \
+                        image \
+                        --severity HIGH,CRITICAL \
+                        --exit-code 1 \
+                        ${APP_IMAGE}:${APP_VERSION}
                 '''
             }
         }
@@ -144,8 +160,7 @@ pipeline {
         }
 
         failure {
-            echo 'Auralis DevSecOps pipeline failed. Check the stage logs for details.'
+            echo 'Auralis DevSecOps pipeline failed. Check the failed stage logs.'
         }
     }
 }
-
