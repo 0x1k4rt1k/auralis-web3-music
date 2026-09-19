@@ -3,7 +3,6 @@ pipeline {
 
     tools {
         nodejs 'NodeJS-22'
-        sonarQube 'SonarScanner'
     }
 
     environment {
@@ -35,9 +34,6 @@ pipeline {
 
                     echo "Docker version:"
                     docker --version
-
-                    echo "SonarScanner version:"
-                    sonar-scanner --version
                 '''
             }
         }
