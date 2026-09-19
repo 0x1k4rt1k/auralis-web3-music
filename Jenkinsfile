@@ -8,6 +8,10 @@ pipeline {
     environment {
         APP_IMAGE = 'auralis-backend'
         APP_VERSION = "${BUILD_NUMBER}"
+
+        // OCI Container Registry
+        OCIR_REGISTRY = 'hyd.ocir.io'
+        OCIR_REPOSITORY = 'hyd.ocir.io/axedsxii3ulu/auralis'
     }
 
     stages {
@@ -95,7 +99,7 @@ pipeline {
         stage('SonarQube Quality Gate') {
             steps {
                 timeout(time: 5, unit: 'MINUTES') {
-                waitForQualityGate abortPipeline: false
+                    waitForQualityGate abortPipeline: false
                 }
             }
         }
@@ -182,10 +186,49 @@ pipeline {
                 '''
             }
         }
+
+        stage('Push Image to OCIR') {
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'ocir-credentials',
+                        usernameVariable: 'OCIR_USERNAME',
+                        passwordVariable: 'OCIR_TOKEN'
+                    )
+                ]) {
+                    sh '''
+                        echo "===== OCIR Login ====="
+
+                        echo "$OCIR_TOKEN" | docker login "$OCIR_REGISTRY" \
+                            -u "$OCIR_USERNAME" \
+                            --password-stdin
+
+                        echo "===== Tagging Images ====="
+
+                        docker tag ${APP_IMAGE}:${APP_VERSION} \
+                            ${OCIR_REPOSITORY}:${APP_VERSION}
+
+                        docker tag ${APP_IMAGE}:latest \
+                            ${OCIR_REPOSITORY}:latest
+
+                        echo "===== Pushing Versioned Image ====="
+
+                        docker push ${OCIR_REPOSITORY}:${APP_VERSION}
+
+                        echo "===== Pushing Latest Image ====="
+
+                        docker push ${OCIR_REPOSITORY}:latest
+
+                        echo "===== OCIR Push Completed ====="
+
+                        docker logout "$OCIR_REGISTRY"
+                    '''
+                }
+            }
+        }
     }
 
     post {
-
         always {
             archiveArtifacts(
                 artifacts: 'dependency-check-report/*',
