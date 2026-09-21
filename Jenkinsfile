@@ -7,11 +7,13 @@ pipeline {
 
     environment {
         APP_IMAGE = 'auralis-backend'
+        FRONTEND_IMAGE = 'auralis-frontend'
         APP_VERSION = "${BUILD_NUMBER}"
 
         // OCI Container Registry
         OCIR_REGISTRY = 'hyd.ocir.io'
         OCIR_REPOSITORY = 'hyd.ocir.io/axedsxii3ulu/auralis'
+        OCIR_FRONTEND_REPOSITORY = 'hyd.ocir.io/axedsxii3ulu/auralis-frontend'
     }
 
     stages {
@@ -148,10 +150,14 @@ pipeline {
             }
         }
 
-        stage('Docker Build') {
+        // =========================
+        // BACKEND
+        // =========================
+
+        stage('Backend Docker Build') {
             steps {
                 sh '''
-                    echo "===== Docker Build ====="
+                    echo "===== Backend Docker Build ====="
 
                     docker build \
                         -t ${APP_IMAGE}:${APP_VERSION} \
@@ -161,20 +167,20 @@ pipeline {
             }
         }
 
-        stage('Docker Image Check') {
+        stage('Backend Docker Image Check') {
             steps {
                 sh '''
-                    echo "===== Docker Image Check ====="
+                    echo "===== Backend Docker Image Check ====="
 
                     docker images ${APP_IMAGE}
                 '''
             }
         }
 
-        stage('Trivy Container Scan') {
+        stage('Backend Trivy Scan') {
             steps {
                 sh '''
-                    echo "===== Trivy Container Security Scan ====="
+                    echo "===== Backend Trivy Security Scan ====="
 
                     docker run --rm \
                         -v /var/run/docker.sock:/var/run/docker.sock \
@@ -187,7 +193,7 @@ pipeline {
             }
         }
 
-        stage('Push Image to OCIR') {
+        stage('Push Backend to OCIR') {
             steps {
                 withCredentials([
                     usernamePassword(
@@ -203,7 +209,7 @@ pipeline {
                             -u "$OCIR_USERNAME" \
                             --password-stdin
 
-                        echo "===== Tagging Images ====="
+                        echo "===== Tagging Backend Images ====="
 
                         docker tag ${APP_IMAGE}:${APP_VERSION} \
                             ${OCIR_REPOSITORY}:${APP_VERSION}
@@ -211,15 +217,96 @@ pipeline {
                         docker tag ${APP_IMAGE}:latest \
                             ${OCIR_REPOSITORY}:latest
 
-                        echo "===== Pushing Versioned Image ====="
+                        echo "===== Pushing Backend Version ====="
 
                         docker push ${OCIR_REPOSITORY}:${APP_VERSION}
 
-                        echo "===== Pushing Latest Image ====="
+                        echo "===== Pushing Backend Latest ====="
 
                         docker push ${OCIR_REPOSITORY}:latest
 
-                        echo "===== OCIR Push Completed ====="
+                        echo "===== Backend OCIR Push Completed ====="
+                    '''
+                }
+            }
+        }
+
+        // =========================
+        // FRONTEND
+        // =========================
+
+        stage('Frontend Docker Build') {
+            steps {
+                sh '''
+                    echo "===== Frontend Docker Build ====="
+
+                    docker build \
+                        -t ${FRONTEND_IMAGE}:${APP_VERSION} \
+                        -t ${FRONTEND_IMAGE}:latest \
+                        ./frontend
+                '''
+            }
+        }
+
+        stage('Frontend Docker Image Check') {
+            steps {
+                sh '''
+                    echo "===== Frontend Docker Image Check ====="
+
+                    docker images ${FRONTEND_IMAGE}
+                '''
+            }
+        }
+
+        stage('Frontend Trivy Scan') {
+            steps {
+                sh '''
+                    echo "===== Frontend Trivy Security Scan ====="
+
+                    docker run --rm \
+                        -v /var/run/docker.sock:/var/run/docker.sock \
+                        aquasec/trivy:latest \
+                        image \
+                        --severity HIGH,CRITICAL \
+                        --exit-code 0 \
+                        ${FRONTEND_IMAGE}:${APP_VERSION}
+                '''
+            }
+        }
+
+        stage('Push Frontend to OCIR') {
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'ocir-credentials',
+                        usernameVariable: 'OCIR_USERNAME',
+                        passwordVariable: 'OCIR_TOKEN'
+                    )
+                ]) {
+                    sh '''
+                        echo "===== OCIR Login ====="
+
+                        echo "$OCIR_TOKEN" | docker login "$OCIR_REGISTRY" \
+                            -u "$OCIR_USERNAME" \
+                            --password-stdin
+
+                        echo "===== Tagging Frontend Images ====="
+
+                        docker tag ${FRONTEND_IMAGE}:${APP_VERSION} \
+                            ${OCIR_FRONTEND_REPOSITORY}:${APP_VERSION}
+
+                        docker tag ${FRONTEND_IMAGE}:latest \
+                            ${OCIR_FRONTEND_REPOSITORY}:latest
+
+                        echo "===== Pushing Frontend Version ====="
+
+                        docker push ${OCIR_FRONTEND_REPOSITORY}:${APP_VERSION}
+
+                        echo "===== Pushing Frontend Latest ====="
+
+                        docker push ${OCIR_FRONTEND_REPOSITORY}:latest
+
+                        echo "===== Frontend OCIR Push Completed ====="
 
                         docker logout "$OCIR_REGISTRY"
                     '''
@@ -229,6 +316,7 @@ pipeline {
     }
 
     post {
+
         always {
             archiveArtifacts(
                 artifacts: 'dependency-check-report/*',
