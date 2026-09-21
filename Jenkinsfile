@@ -6,6 +6,7 @@ pipeline {
     }
 
     environment {
+        // Docker images
         APP_IMAGE = 'auralis-backend'
         FRONTEND_IMAGE = 'auralis-frontend'
         APP_VERSION = "${BUILD_NUMBER}"
@@ -13,7 +14,6 @@ pipeline {
         // OCI Container Registry
         OCIR_REGISTRY = 'hyd.ocir.io'
         OCIR_REPOSITORY = 'hyd.ocir.io/axedsxii3ulu/auralis'
-        OCIR_FRONTEND_REPOSITORY = 'hyd.ocir.io/axedsxii3ulu/auralis-frontend'
     }
 
     stages {
@@ -150,9 +150,9 @@ pipeline {
             }
         }
 
-        // =========================
+        // =====================================================
         // BACKEND
-        // =========================
+        // =====================================================
 
         stage('Backend Docker Build') {
             steps {
@@ -209,21 +209,23 @@ pipeline {
                             -u "$OCIR_USERNAME" \
                             --password-stdin
 
-                        echo "===== Tagging Backend Images ====="
+                        echo "===== Tagging Backend ====="
 
                         docker tag ${APP_IMAGE}:${APP_VERSION} \
-                            ${OCIR_REPOSITORY}:${APP_VERSION}
+                            ${OCIR_REPOSITORY}:backend-${APP_VERSION}
 
                         docker tag ${APP_IMAGE}:latest \
-                            ${OCIR_REPOSITORY}:latest
+                            ${OCIR_REPOSITORY}:backend-latest
 
                         echo "===== Pushing Backend Version ====="
 
-                        docker push ${OCIR_REPOSITORY}:${APP_VERSION}
+                        docker push \
+                            ${OCIR_REPOSITORY}:backend-${APP_VERSION}
 
                         echo "===== Pushing Backend Latest ====="
 
-                        docker push ${OCIR_REPOSITORY}:latest
+                        docker push \
+                            ${OCIR_REPOSITORY}:backend-latest
 
                         echo "===== Backend OCIR Push Completed ====="
                     '''
@@ -231,9 +233,9 @@ pipeline {
             }
         }
 
-        // =========================
+        // =====================================================
         // FRONTEND
-        // =========================
+        // =====================================================
 
         stage('Frontend Docker Build') {
             steps {
@@ -290,21 +292,23 @@ pipeline {
                             -u "$OCIR_USERNAME" \
                             --password-stdin
 
-                        echo "===== Tagging Frontend Images ====="
+                        echo "===== Tagging Frontend ====="
 
                         docker tag ${FRONTEND_IMAGE}:${APP_VERSION} \
-                            ${OCIR_FRONTEND_REPOSITORY}:${APP_VERSION}
+                            ${OCIR_REPOSITORY}:frontend-${APP_VERSION}
 
                         docker tag ${FRONTEND_IMAGE}:latest \
-                            ${OCIR_FRONTEND_REPOSITORY}:latest
+                            ${OCIR_REPOSITORY}:frontend-latest
 
                         echo "===== Pushing Frontend Version ====="
 
-                        docker push ${OCIR_FRONTEND_REPOSITORY}:${APP_VERSION}
+                        docker push \
+                            ${OCIR_REPOSITORY}:frontend-${APP_VERSION}
 
                         echo "===== Pushing Frontend Latest ====="
 
-                        docker push ${OCIR_FRONTEND_REPOSITORY}:latest
+                        docker push \
+                            ${OCIR_REPOSITORY}:frontend-latest
 
                         echo "===== Frontend OCIR Push Completed ====="
 
@@ -316,7 +320,6 @@ pipeline {
     }
 
     post {
-
         always {
             archiveArtifacts(
                 artifacts: 'dependency-check-report/*',
