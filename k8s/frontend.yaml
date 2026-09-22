@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auralis-frontend
+  namespace: auralis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: auralis-frontend
+  template:
+    metadata:
+      labels:
+        app: auralis-frontend
+    spec:
+      imagePullSecrets:
+        - name: ocir-secret
+      containers:
+        - name: frontend
+          image: hyd.ocir.io/axedsxii3ulu/auralis:frontend-latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: auralis-frontend
+  namespace: auralis
+spec:
+  type: LoadBalancer
+  selector:
+    app: auralis-frontend
+  ports:
+    - port: 80
+      targetPort: 8080
