@@ -1,0 +1,78 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: auralis-db-init
+  namespace: auralis
+data:
+  init.sql: |
+    CREATE TABLE IF NOT EXISTS artists (
+      id SERIAL PRIMARY KEY,
+      name VARCHAR(120) NOT NULL,
+      genre VARCHAR(80) NOT NULL,
+      verified BOOLEAN NOT NULL DEFAULT FALSE,
+      wallet_address VARCHAR(64)
+    );
+
+    CREATE TABLE IF NOT EXISTS tracks (
+      id SERIAL PRIMARY KEY,
+      artist_id INTEGER NOT NULL REFERENCES artists(id),
+      title VARCHAR(160) NOT NULL,
+      genre VARCHAR(80) NOT NULL,
+      duration_seconds INTEGER NOT NULL CHECK (duration_seconds > 0),
+      cover_url TEXT NOT NULL,
+      audio_url TEXT NOT NULL,
+      plays INTEGER NOT NULL DEFAULT 0,
+      owned_token_id VARCHAR(80),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS playlists (
+      id SERIAL PRIMARY KEY,
+      name VARCHAR(120) NOT NULL,
+      description TEXT,
+      cover_url TEXT NOT NULL
+    );
+
+    INSERT INTO artists (name, genre, verified, wallet_address)
+    SELECT 'Neon District', 'Synthwave', TRUE, '0x71AUR4L15D15TR1CT'
+    WHERE NOT EXISTS (SELECT 1 FROM artists WHERE name='Neon District');
+
+    INSERT INTO artists (name, genre, verified, wallet_address)
+    SELECT 'Luna Vale', 'Electronic', TRUE, '0xLUN4V4LE'
+    WHERE NOT EXISTS (SELECT 1 FROM artists WHERE name='Luna Vale');
+
+    INSERT INTO artists (name, genre, verified, wallet_address)
+    SELECT 'Echo Harbor', 'Indie', TRUE, '0xECH0H4RB0R'
+    WHERE NOT EXISTS (SELECT 1 FROM artists WHERE name='Echo Harbor');
+
+    INSERT INTO artists (name, genre, verified, wallet_address)
+    SELECT 'Kairo', 'Lo-Fi', FALSE, '0xK41RO'
+    WHERE NOT EXISTS (SELECT 1 FROM artists WHERE name='Kairo');
+
+    INSERT INTO tracks (artist_id, title, genre, duration_seconds, cover_url, audio_url, plays, owned_token_id)
+    SELECT a.id, 'Midnight Drive', 'Synthwave', 258, '/covers/neon.svg', '/audio/demo.mp3', 184291, 'AUR-1842'
+    FROM artists a WHERE a.name='Neon District'
+    AND NOT EXISTS (SELECT 1 FROM tracks WHERE title='Midnight Drive');
+
+    INSERT INTO tracks (artist_id, title, genre, duration_seconds, cover_url, audio_url, plays, owned_token_id)
+    SELECT a.id, 'Afterglow', 'Electronic', 221, '/covers/luna.svg', '/audio/demo.mp3', 121840, 'AUR-7281'
+    FROM artists a WHERE a.name='Luna Vale'
+    AND NOT EXISTS (SELECT 1 FROM tracks WHERE title='Afterglow');
+
+    INSERT INTO tracks (artist_id, title, genre, duration_seconds, cover_url, audio_url, plays, owned_token_id)
+    SELECT a.id, 'Static Hearts', 'Indie', 247, '/covers/echo.svg', '/audio/demo.mp3', 87310, NULL
+    FROM artists a WHERE a.name='Echo Harbor'
+    AND NOT EXISTS (SELECT 1 FROM tracks WHERE title='Static Hearts');
+
+    INSERT INTO tracks (artist_id, title, genre, duration_seconds, cover_url, audio_url, plays, owned_token_id)
+    SELECT a.id, 'Cloud Memory', 'Lo-Fi', 193, '/covers/kairo.svg', '/audio/demo.mp3', 64812, 'AUR-3901'
+    FROM artists a WHERE a.name='Kairo'
+    AND NOT EXISTS (SELECT 1 FROM tracks WHERE title='Cloud Memory');
+
+    INSERT INTO playlists (name, description, cover_url)
+    SELECT 'Night Shift', 'Late-night electronic transmissions.', '/covers/night.svg'
+    WHERE NOT EXISTS (SELECT 1 FROM playlists WHERE name='Night Shift');
+
+    INSERT INTO playlists (name, description, cover_url)
+    SELECT 'Web3 Waves', 'Music from the decentralized scene.', '/covers/web3.svg'
+    WHERE NOT EXISTS (SELECT 1 FROM playlists WHERE name='Web3 Waves');
