@@ -3,33 +3,45 @@ kind: Job
 metadata:
   name: auralis-db-init
   namespace: auralis
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
 spec:
   backoffLimit: 3
   template:
     spec:
       restartPolicy: OnFailure
+
       containers:
         - name: db-init
           image: docker.io/library/postgres:16-alpine
+
           env:
             - name: PGHOST
               value: postgres
+
             - name: PGPORT
               value: "5432"
+
             - name: PGDATABASE
               value: auralis
+
             - name: PGUSER
               value: auralis
+
             - name: PGPASSWORD
               value: auralis-db-password
+
           command:
             - /bin/sh
             - -c
             - |
               psql -f /init/init.sql
+
           volumeMounts:
             - name: init-script
               mountPath: /init
+
       volumes:
         - name: init-script
           configMap:
