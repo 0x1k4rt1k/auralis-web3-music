@@ -6,12 +6,10 @@ pipeline {
     }
 
     environment {
-        // Docker images
         APP_IMAGE = 'auralis-backend'
         FRONTEND_IMAGE = 'auralis-frontend'
         APP_VERSION = "${BUILD_NUMBER}"
 
-        // OCI Container Registry
         OCIR_REGISTRY = 'hyd.ocir.io'
         OCIR_REPOSITORY = 'hyd.ocir.io/axedsxii3ulu/auralis'
     }
@@ -28,7 +26,6 @@ pipeline {
             steps {
                 sh '''
                     echo "===== Environment Check ====="
-
                     echo "Node version:"
                     node --version
 
@@ -150,10 +147,6 @@ pipeline {
             }
         }
 
-        // =====================================================
-        // BACKEND
-        // =====================================================
-
         stage('Backend Docker Build') {
             steps {
                 sh '''
@@ -171,7 +164,6 @@ pipeline {
             steps {
                 sh '''
                     echo "===== Backend Docker Image Check ====="
-
                     docker images ${APP_IMAGE}
                 '''
             }
@@ -233,10 +225,6 @@ pipeline {
             }
         }
 
-        // =====================================================
-        // FRONTEND
-        // =====================================================
-
         stage('Frontend Docker Build') {
             steps {
                 sh '''
@@ -254,7 +242,6 @@ pipeline {
             steps {
                 sh '''
                     echo "===== Frontend Docker Image Check ====="
-
                     docker images ${FRONTEND_IMAGE}
                 '''
             }
@@ -317,9 +304,71 @@ pipeline {
                 }
             }
         }
+
+        stage('Update GitOps Manifests') {
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'github-gitops',
+                        usernameVariable: 'GIT_USERNAME',
+                        passwordVariable: 'GIT_TOKEN'
+                    )
+                ]) {
+                    sh '''
+                        echo "===== Updating GitOps Manifests ====="
+
+                        echo "Current backend image:"
+                        grep "image:" k8s/backend.yaml
+
+                        echo "Current frontend image:"
+                        grep "image:" k8s/frontend.yaml
+
+                        echo "Updating backend image to build ${APP_VERSION}"
+
+                        sed -i \
+                            "s#image: hyd.ocir.io/axedsxii3ulu/auralis:backend-[^[:space:]]*#image: hyd.ocir.io/axedsxii3ulu/auralis:backend-${APP_VERSION}#" \
+                            k8s/backend.yaml
+
+                        echo "Updating frontend image to build ${APP_VERSION}"
+
+                        sed -i \
+                            "s#image: hyd.ocir.io/axedsxii3ulu/auralis:frontend-[^[:space:]]*#image: hyd.ocir.io/axedsxii3ulu/auralis:frontend-${APP_VERSION}#" \
+                            k8s/frontend.yaml
+
+                        echo "Updated backend image:"
+                        grep "image:" k8s/backend.yaml
+
+                        echo "Updated frontend image:"
+                        grep "image:" k8s/frontend.yaml
+
+                        git config user.name "Jenkins"
+                        git config user.email "jenkins@auralis.local"
+
+                        git add k8s/backend.yaml k8s/frontend.yaml
+
+                        if git diff --cached --quiet; then
+                            echo "No GitOps changes detected."
+                            exit 0
+                        fi
+
+                        git commit \
+                            -m "Update Auralis images to build ${APP_VERSION} [skip ci]"
+
+                        echo "===== Pushing GitOps Changes ====="
+
+                        git push \
+                            "https://${GIT_USERNAME}:${GIT_TOKEN}@github.com/0x1k4rt1k/auralis-web3-music.git" \
+                            HEAD:main
+
+                        echo "===== GitOps Update Completed ====="
+                    '''
+                }
+            }
+        }
     }
 
     post {
+
         always {
             archiveArtifacts(
                 artifacts: 'dependency-check-report/*',
@@ -328,7 +377,9 @@ pipeline {
         }
 
         success {
-            echo 'Auralis DevSecOps pipeline completed successfully.'
+            echo 'Auralis DevSecOps CI/CD pipeline completed successfully.'
+            echo 'Docker images pushed to OCIR and GitOps manifests updated.'
+            echo 'Argo CD will synchronize the new image versions to OKE.'
         }
 
         failure {
