@@ -37,16 +37,10 @@ spec:
 
           env:
             - name: POSTGRES_DB
-              valueFrom:
-                secretKeyRef:
-                  name: postgres-secret
-                  key: POSTGRES_DB
+              value: auralis
 
             - name: POSTGRES_USER
-              valueFrom:
-                secretKeyRef:
-                  name: postgres-secret
-                  key: POSTGRES_USER
+              value: auralis
 
             - name: POSTGRES_PASSWORD
               valueFrom:

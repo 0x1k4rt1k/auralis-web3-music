@@ -26,16 +26,10 @@ spec:
               value: "5432"
 
             - name: PGDATABASE
-              valueFrom:
-                secretKeyRef:
-                  name: postgres-secret
-                  key: POSTGRES_DB
+              value: auralis
 
             - name: PGUSER
-              valueFrom:
-                secretKeyRef:
-                  name: postgres-secret
-                  key: POSTGRES_USER
+              value: auralis
 
             - name: PGPASSWORD
               valueFrom:
