@@ -6,8 +6,10 @@ metadata:
   annotations:
     argocd.argoproj.io/hook: Sync
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+
 spec:
   backoffLimit: 3
+
   template:
     spec:
       restartPolicy: OnFailure
@@ -24,18 +26,32 @@ spec:
               value: "5432"
 
             - name: PGDATABASE
-              value: auralis
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_DB
 
             - name: PGUSER
-              value: auralis
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_USER
 
             - name: PGPASSWORD
-              value: auralis-db-password
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_PASSWORD
 
           command:
             - /bin/sh
             - -c
             - |
+              until pg_isready -h "$PGHOST" -p "$PGPORT" -U "$PGUSER"; do
+                echo "Waiting for PostgreSQL..."
+                sleep 2
+              done
+
               psql -f /init/init.sql
 
           volumeMounts:
