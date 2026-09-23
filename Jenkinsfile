@@ -1,3 +1,4 @@
+```groovy
 pipeline {
     agent any
 
@@ -12,7 +13,9 @@ pipeline {
 
         OCIR_REGISTRY = 'hyd.ocir.io'
         OCIR_REPOSITORY = 'hyd.ocir.io/axedsxii3ulu/auralis'
+
         SYFT_VERSION = 'v1.52.0'
+        GRYPE_IMAGE = 'anchore/grype:latest'
     }
 
     stages {
@@ -190,21 +193,25 @@ pipeline {
             steps {
                 sh '''
                     echo "===== Preparing SBOM Directory ====="
+
                     rm -rf "${WORKSPACE}/sbom"
                     mkdir -p "${WORKSPACE}/sbom"
                 '''
             }
         }
 
-        stage('Backend SBOM') {
+        stage('Backend SBOM + Grype') {
             steps {
                 sh '''
                     set -e
 
-                    echo "===== Backend SBOM Generation ====="
+                    echo "========================================"
+                    echo "Backend SBOM Generation"
+                    echo "========================================"
 
                     SBOM_VOLUME="auralis-sbom-backend-${BUILD_NUMBER}"
                     SBOM_FILE="backend-${APP_VERSION}-sbom.json"
+                    GRYPE_FILE="backend-${APP_VERSION}-grype.json"
                     SBOM_CONTAINER="auralis-sbom-extract-backend-${BUILD_NUMBER}"
 
                     docker rm -f "${SBOM_CONTAINER}" >/dev/null 2>&1 || true
@@ -212,7 +219,9 @@ pipeline {
                     docker volume create "${SBOM_VOLUME}" >/dev/null
 
                     echo "Checking backend image..."
-                    docker image inspect "${APP_IMAGE}:${APP_VERSION}" >/dev/null
+
+                    docker image inspect \
+                        "${APP_IMAGE}:${APP_VERSION}" >/dev/null
 
                     echo "Running Syft ${SYFT_VERSION}..."
 
@@ -223,12 +232,41 @@ pipeline {
                         "docker:${APP_IMAGE}:${APP_VERSION}" \
                         -o "cyclonedx-json=/work/${SBOM_FILE}"
 
-                    echo "Validating SBOM inside Docker volume..."
+                    echo "Validating SBOM..."
 
                     docker run --rm \
                         -v "${SBOM_VOLUME}:/work:ro" \
                         alpine:latest \
                         sh -c "test -s /work/${SBOM_FILE} && ls -lh /work/${SBOM_FILE}"
+
+                    echo "========================================"
+                    echo "Backend Grype Vulnerability Scan"
+                    echo "========================================"
+
+                    echo "Scanning CycloneDX SBOM with Grype..."
+
+                    docker run --rm \
+                        -v "${SBOM_VOLUME}:/work:rw" \
+                        ${GRYPE_IMAGE} \
+                        "sbom:/work/${SBOM_FILE}" \
+                        -o json \
+                        --file "/work/${GRYPE_FILE}"
+
+                    echo "Grype scan completed."
+
+                    echo "Validating Grype report..."
+
+                    docker run --rm \
+                        -v "${SBOM_VOLUME}:/work:ro" \
+                        alpine:latest \
+                        sh -c "test -s /work/${GRYPE_FILE} && ls -lh /work/${GRYPE_FILE}"
+
+                    echo "Generating human-readable Grype summary..."
+
+                    docker run --rm \
+                        -v "${SBOM_VOLUME}:/work:ro" \
+                        ${GRYPE_IMAGE} \
+                        "sbom:/work/${SBOM_FILE}"
 
                     echo "Creating extraction container..."
 
@@ -238,27 +276,45 @@ pipeline {
                         alpine:latest \
                         sh -c "sleep 300" >/dev/null
 
-                    echo "Copying SBOM using docker cp..."
+                    echo "Copying SBOM to Jenkins workspace..."
 
                     docker cp \
                         "${SBOM_CONTAINER}:/work/${SBOM_FILE}" \
                         "${WORKSPACE}/sbom/${SBOM_FILE}"
 
+                    echo "Copying Grype report to Jenkins workspace..."
+
+                    docker cp \
+                        "${SBOM_CONTAINER}:/work/${GRYPE_FILE}" \
+                        "${WORKSPACE}/sbom/${GRYPE_FILE}"
+
                     docker rm -f "${SBOM_CONTAINER}" >/dev/null
 
-                    echo "Checking Jenkins workspace SBOM..."
+                    echo "Checking generated reports..."
 
                     if [ ! -s "${WORKSPACE}/sbom/${SBOM_FILE}" ]; then
-                        echo "ERROR: Backend SBOM was not copied to Jenkins workspace."
+                        echo "ERROR: Backend SBOM was not copied."
                         ls -lah "${WORKSPACE}/sbom"
                         docker volume rm "${SBOM_VOLUME}" >/dev/null 2>&1 || true
                         exit 1
                     fi
 
-                    echo "Backend SBOM generated successfully:"
+                    if [ ! -s "${WORKSPACE}/sbom/${GRYPE_FILE}" ]; then
+                        echo "ERROR: Backend Grype report was not copied."
+                        ls -lah "${WORKSPACE}/sbom"
+                        docker volume rm "${SBOM_VOLUME}" >/dev/null 2>&1 || true
+                        exit 1
+                    fi
+
+                    echo "Backend SBOM:"
                     ls -lh "${WORKSPACE}/sbom/${SBOM_FILE}"
 
+                    echo "Backend Grype report:"
+                    ls -lh "${WORKSPACE}/sbom/${GRYPE_FILE}"
+
                     docker volume rm "${SBOM_VOLUME}" >/dev/null
+
+                    echo "===== Backend SBOM + Grype Completed ====="
                 '''
             }
         }
@@ -341,15 +397,18 @@ pipeline {
             }
         }
 
-        stage('Frontend SBOM') {
+        stage('Frontend SBOM + Grype') {
             steps {
                 sh '''
                     set -e
 
-                    echo "===== Frontend SBOM Generation ====="
+                    echo "========================================"
+                    echo "Frontend SBOM Generation"
+                    echo "========================================"
 
                     SBOM_VOLUME="auralis-sbom-frontend-${BUILD_NUMBER}"
                     SBOM_FILE="frontend-${APP_VERSION}-sbom.json"
+                    GRYPE_FILE="frontend-${APP_VERSION}-grype.json"
                     SBOM_CONTAINER="auralis-sbom-extract-frontend-${BUILD_NUMBER}"
 
                     docker rm -f "${SBOM_CONTAINER}" >/dev/null 2>&1 || true
@@ -357,7 +416,9 @@ pipeline {
                     docker volume create "${SBOM_VOLUME}" >/dev/null
 
                     echo "Checking frontend image..."
-                    docker image inspect "${FRONTEND_IMAGE}:${APP_VERSION}" >/dev/null
+
+                    docker image inspect \
+                        "${FRONTEND_IMAGE}:${APP_VERSION}" >/dev/null
 
                     echo "Running Syft ${SYFT_VERSION}..."
 
@@ -368,12 +429,41 @@ pipeline {
                         "docker:${FRONTEND_IMAGE}:${APP_VERSION}" \
                         -o "cyclonedx-json=/work/${SBOM_FILE}"
 
-                    echo "Validating SBOM inside Docker volume..."
+                    echo "Validating SBOM..."
 
                     docker run --rm \
                         -v "${SBOM_VOLUME}:/work:ro" \
                         alpine:latest \
                         sh -c "test -s /work/${SBOM_FILE} && ls -lh /work/${SBOM_FILE}"
+
+                    echo "========================================"
+                    echo "Frontend Grype Vulnerability Scan"
+                    echo "========================================"
+
+                    echo "Scanning CycloneDX SBOM with Grype..."
+
+                    docker run --rm \
+                        -v "${SBOM_VOLUME}:/work:rw" \
+                        ${GRYPE_IMAGE} \
+                        "sbom:/work/${SBOM_FILE}" \
+                        -o json \
+                        --file "/work/${GRYPE_FILE}"
+
+                    echo "Grype scan completed."
+
+                    echo "Validating Grype report..."
+
+                    docker run --rm \
+                        -v "${SBOM_VOLUME}:/work:ro" \
+                        alpine:latest \
+                        sh -c "test -s /work/${GRYPE_FILE} && ls -lh /work/${GRYPE_FILE}"
+
+                    echo "Generating human-readable Grype summary..."
+
+                    docker run --rm \
+                        -v "${SBOM_VOLUME}:/work:ro" \
+                        ${GRYPE_IMAGE} \
+                        "sbom:/work/${SBOM_FILE}"
 
                     echo "Creating extraction container..."
 
@@ -383,27 +473,45 @@ pipeline {
                         alpine:latest \
                         sh -c "sleep 300" >/dev/null
 
-                    echo "Copying SBOM using docker cp..."
+                    echo "Copying SBOM to Jenkins workspace..."
 
                     docker cp \
                         "${SBOM_CONTAINER}:/work/${SBOM_FILE}" \
                         "${WORKSPACE}/sbom/${SBOM_FILE}"
 
+                    echo "Copying Grype report to Jenkins workspace..."
+
+                    docker cp \
+                        "${SBOM_CONTAINER}:/work/${GRYPE_FILE}" \
+                        "${WORKSPACE}/sbom/${GRYPE_FILE}"
+
                     docker rm -f "${SBOM_CONTAINER}" >/dev/null
 
-                    echo "Checking Jenkins workspace SBOM..."
+                    echo "Checking generated reports..."
 
                     if [ ! -s "${WORKSPACE}/sbom/${SBOM_FILE}" ]; then
-                        echo "ERROR: Frontend SBOM was not copied to Jenkins workspace."
+                        echo "ERROR: Frontend SBOM was not copied."
                         ls -lah "${WORKSPACE}/sbom"
                         docker volume rm "${SBOM_VOLUME}" >/dev/null 2>&1 || true
                         exit 1
                     fi
 
-                    echo "Frontend SBOM generated successfully:"
+                    if [ ! -s "${WORKSPACE}/sbom/${GRYPE_FILE}" ]; then
+                        echo "ERROR: Frontend Grype report was not copied."
+                        ls -lah "${WORKSPACE}/sbom"
+                        docker volume rm "${SBOM_VOLUME}" >/dev/null 2>&1 || true
+                        exit 1
+                    fi
+
+                    echo "Frontend SBOM:"
                     ls -lh "${WORKSPACE}/sbom/${SBOM_FILE}"
 
+                    echo "Frontend Grype report:"
+                    ls -lh "${WORKSPACE}/sbom/${GRYPE_FILE}"
+
                     docker volume rm "${SBOM_VOLUME}" >/dev/null
+
+                    echo "===== Frontend SBOM + Grype Completed ====="
                 '''
             }
         }
@@ -538,3 +646,4 @@ pipeline {
         }
     }
 }
+```
