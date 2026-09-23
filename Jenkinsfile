@@ -186,6 +186,19 @@ pipeline {
             }
         }
 
+        stage('Prepare SBOM Directory') {
+            steps {
+                sh '''
+                    echo "===== Preparing SBOM Directory ====="
+
+                    rm -rf "${WORKSPACE}/sbom"
+                    mkdir -p "${WORKSPACE}/sbom"
+
+                    ls -la "${WORKSPACE}/sbom"
+                '''
+            }
+        }
+
         stage('Backend SBOM') {
             steps {
                 sh '''
@@ -194,31 +207,45 @@ pipeline {
                     echo "===== Backend SBOM Generation ====="
 
                     SBOM_DIR="${WORKSPACE}/sbom"
-                    mkdir -p "${SBOM_DIR}"
+                    TEMP_SBOM_DIR="/tmp/auralis-sbom-${BUILD_NUMBER}"
+
+                    rm -rf "${TEMP_SBOM_DIR}"
+                    mkdir -p "${TEMP_SBOM_DIR}"
 
                     echo "Checking backend image..."
-                    docker image inspect "${APP_IMAGE}:${APP_VERSION}" >/dev/null
+
+                    docker image inspect                         "${APP_IMAGE}:${APP_VERSION}"                         >/dev/null
 
                     echo "Running Syft ${SYFT_VERSION}..."
 
-                    docker run --rm \
-                        -v /var/run/docker.sock:/var/run/docker.sock \
-                        -v "${SBOM_DIR}:/output" \
-                        ghcr.io/anchore/syft:${SYFT_VERSION} \
-                        "docker:${APP_IMAGE}:${APP_VERSION}" \
-                        -o "cyclonedx-json=/output/backend-${APP_VERSION}-sbom.json"
+                    docker run --rm                         -v /var/run/docker.sock:/var/run/docker.sock                         -v "${TEMP_SBOM_DIR}:/work"                         ghcr.io/anchore/syft:${SYFT_VERSION}                         "docker:${APP_IMAGE}:${APP_VERSION}"                         -o "cyclonedx-json=/work/backend-${APP_VERSION}-sbom.json"
 
-                    echo "Checking backend SBOM..."
+                    echo "Checking temporary SBOM..."
+
+                    ls -lah "${TEMP_SBOM_DIR}"
+
+                    if [ ! -s "${TEMP_SBOM_DIR}/backend-${APP_VERSION}-sbom.json" ]; then
+                        echo "ERROR: Syft generated an empty or missing backend SBOM."
+                        echo "Syft output directory:"
+                        ls -la "${TEMP_SBOM_DIR}"
+                        exit 1
+                    fi
+
+                    echo "Copying SBOM to Jenkins workspace..."
+
+                    cp                         "${TEMP_SBOM_DIR}/backend-${APP_VERSION}-sbom.json"                         "${SBOM_DIR}/backend-${APP_VERSION}-sbom.json"
+
+                    echo "Checking Jenkins workspace SBOM..."
 
                     if [ ! -s "${SBOM_DIR}/backend-${APP_VERSION}-sbom.json" ]; then
-                        echo "ERROR: Backend SBOM was not generated."
-                        echo "SBOM directory contents:"
-                        ls -la "${SBOM_DIR}"
+                        echo "ERROR: Backend SBOM copy failed."
                         exit 1
                     fi
 
                     echo "Backend SBOM generated successfully:"
                     ls -lh "${SBOM_DIR}/backend-${APP_VERSION}-sbom.json"
+
+                    rm -rf "${TEMP_SBOM_DIR}"
                 '''
             }
         }
@@ -309,31 +336,45 @@ pipeline {
                     echo "===== Frontend SBOM Generation ====="
 
                     SBOM_DIR="${WORKSPACE}/sbom"
-                    mkdir -p "${SBOM_DIR}"
+                    TEMP_SBOM_DIR="/tmp/auralis-sbom-${BUILD_NUMBER}"
+
+                    rm -rf "${TEMP_SBOM_DIR}"
+                    mkdir -p "${TEMP_SBOM_DIR}"
 
                     echo "Checking frontend image..."
-                    docker image inspect "${FRONTEND_IMAGE}:${APP_VERSION}" >/dev/null
+
+                    docker image inspect                         "${FRONTEND_IMAGE}:${APP_VERSION}"                         >/dev/null
 
                     echo "Running Syft ${SYFT_VERSION}..."
 
-                    docker run --rm \
-                        -v /var/run/docker.sock:/var/run/docker.sock \
-                        -v "${SBOM_DIR}:/output" \
-                        ghcr.io/anchore/syft:${SYFT_VERSION} \
-                        "docker:${FRONTEND_IMAGE}:${APP_VERSION}" \
-                        -o "cyclonedx-json=/output/frontend-${APP_VERSION}-sbom.json"
+                    docker run --rm                         -v /var/run/docker.sock:/var/run/docker.sock                         -v "${TEMP_SBOM_DIR}:/work"                         ghcr.io/anchore/syft:${SYFT_VERSION}                         "docker:${FRONTEND_IMAGE}:${APP_VERSION}"                         -o "cyclonedx-json=/work/frontend-${APP_VERSION}-sbom.json"
 
-                    echo "Checking frontend SBOM..."
+                    echo "Checking temporary SBOM..."
+
+                    ls -lah "${TEMP_SBOM_DIR}"
+
+                    if [ ! -s "${TEMP_SBOM_DIR}/frontend-${APP_VERSION}-sbom.json" ]; then
+                        echo "ERROR: Syft generated an empty or missing frontend SBOM."
+                        echo "Syft output directory:"
+                        ls -la "${TEMP_SBOM_DIR}"
+                        exit 1
+                    fi
+
+                    echo "Copying SBOM to Jenkins workspace..."
+
+                    cp                         "${TEMP_SBOM_DIR}/frontend-${APP_VERSION}-sbom.json"                         "${SBOM_DIR}/frontend-${APP_VERSION}-sbom.json"
+
+                    echo "Checking Jenkins workspace SBOM..."
 
                     if [ ! -s "${SBOM_DIR}/frontend-${APP_VERSION}-sbom.json" ]; then
-                        echo "ERROR: Frontend SBOM was not generated."
-                        echo "SBOM directory contents:"
-                        ls -la "${SBOM_DIR}"
+                        echo "ERROR: Frontend SBOM copy failed."
                         exit 1
                     fi
 
                     echo "Frontend SBOM generated successfully:"
                     ls -lh "${SBOM_DIR}/frontend-${APP_VERSION}-sbom.json"
+
+                    rm -rf "${TEMP_SBOM_DIR}"
                 '''
             }
         }
