@@ -339,7 +339,6 @@ pipeline {
 
         stage('Backend SBOM') {
             steps {
-
                 sh '''
                     set -e
 
@@ -347,19 +346,40 @@ pipeline {
                     echo "Generating Backend SBOM"
                     echo "======================================"
 
-                    mkdir -p "${WORKSPACE}/${SBOM_DIR}"
+                    mkdir -p "${WORKSPACE}/sbom"
+
+                    echo "Checking backend image..."
+                    docker image inspect ${BACKEND_IMAGE}:${APP_VERSION} >/dev/null
+
+                    echo "Creating temporary SBOM volume..."
+
+                    docker volume create auralis-sbom-output >/dev/null
 
                     docker run --rm \
-                      -v /var/run/docker.sock:/var/run/docker.sock \
-                      -v "${WORKSPACE}/${SBOM_DIR}:/work" \
-                      ghcr.io/anchore/syft:${SYFT_VERSION} \
-                      docker:${BACKEND_IMAGE}:${APP_VERSION} \
-                      -o cyclonedx-json=/work/backend-${APP_VERSION}-sbom.json
+                        -v /var/run/docker.sock:/var/run/docker.sock \
+                        -v auralis-sbom-output:/work \
+                        ghcr.io/anchore/syft:${SYFT_VERSION} \
+                        "docker:${BACKEND_IMAGE}:${APP_VERSION}" \
+                        -o "cyclonedx-json=/work/backend-${APP_VERSION}-sbom.json"
 
-                    echo "Backend SBOM generated."
+                    echo "Copying SBOM from Docker volume..."
 
-                    ls -lh \
-                      "${WORKSPACE}/${SBOM_DIR}/backend-${APP_VERSION}-sbom.json"
+                    docker run --rm \
+                        -v auralis-sbom-output:/work \
+                        -v "${WORKSPACE}/sbom:/output" \
+                        alpine:latest \
+                        cp "/work/backend-${APP_VERSION}-sbom.json" \
+                        "/output/backend-${APP_VERSION}-sbom.json"
+
+                    docker volume rm auralis-sbom-output >/dev/null
+
+                    echo "Checking generated SBOM..."
+
+                    test -s "${WORKSPACE}/sbom/backend-${APP_VERSION}-sbom.json"
+
+                    echo "Backend SBOM generated successfully."
+
+                    ls -lh "${WORKSPACE}/sbom/backend-${APP_VERSION}-sbom.json"
                 '''
             }
         }
@@ -440,7 +460,6 @@ pipeline {
 
         stage('Frontend SBOM') {
             steps {
-
                 sh '''
                     set -e
 
@@ -448,19 +467,40 @@ pipeline {
                     echo "Generating Frontend SBOM"
                     echo "======================================"
 
-                    mkdir -p "${WORKSPACE}/${SBOM_DIR}"
+                    mkdir -p "${WORKSPACE}/sbom"
+
+                    echo "Checking frontend image..."
+                    docker image inspect ${FRONTEND_IMAGE}:${APP_VERSION} >/dev/null
+
+                    echo "Creating temporary SBOM volume..."
+
+                    docker volume create auralis-frontend-sbom-output >/dev/null
 
                     docker run --rm \
-                      -v /var/run/docker.sock:/var/run/docker.sock \
-                      -v "${WORKSPACE}/${SBOM_DIR}:/work" \
-                      ghcr.io/anchore/syft:${SYFT_VERSION} \
-                      docker:${FRONTEND_IMAGE}:${APP_VERSION} \
-                      -o cyclonedx-json=/work/frontend-${APP_VERSION}-sbom.json
+                        -v /var/run/docker.sock:/var/run/docker.sock \
+                        -v auralis-frontend-sbom-output:/work \
+                        ghcr.io/anchore/syft:${SYFT_VERSION} \
+                        "docker:${FRONTEND_IMAGE}:${APP_VERSION}" \
+                        -o "cyclonedx-json=/work/frontend-${APP_VERSION}-sbom.json"
 
-                    echo "Frontend SBOM generated."
+                    echo "Copying SBOM from Docker volume..."
 
-                    ls -lh \
-                      "${WORKSPACE}/${SBOM_DIR}/frontend-${APP_VERSION}-sbom.json"
+                    docker run --rm \
+                        -v auralis-frontend-sbom-output:/work \
+                        -v "${WORKSPACE}/sbom:/output" \
+                        alpine:latest \
+                        cp "/work/frontend-${APP_VERSION}-sbom.json" \
+                        "/output/frontend-${APP_VERSION}-sbom.json"
+
+                    docker volume rm auralis-frontend-sbom-output >/dev/null
+
+                    echo "Checking generated SBOM..."
+
+                    test -s "${WORKSPACE}/sbom/frontend-${APP_VERSION}-sbom.json"
+
+                    echo "Frontend SBOM generated successfully."
+
+                    ls -lh "${WORKSPACE}/sbom/frontend-${APP_VERSION}-sbom.json"
                 '''
             }
         }
