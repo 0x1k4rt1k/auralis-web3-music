@@ -34,6 +34,8 @@ kind: Service
 metadata:
   name: auralis-backend
   namespace: auralis
+  labels:
+    app: auralis-backend
 spec:
   type: ClusterIP
   selector:
