@@ -190,11 +190,8 @@ pipeline {
             steps {
                 sh '''
                     echo "===== Preparing SBOM Directory ====="
-
                     rm -rf "${WORKSPACE}/sbom"
                     mkdir -p "${WORKSPACE}/sbom"
-
-                    ls -la "${WORKSPACE}/sbom"
                 '''
             }
         }
@@ -206,46 +203,40 @@ pipeline {
 
                     echo "===== Backend SBOM Generation ====="
 
-                    SBOM_DIR="${WORKSPACE}/sbom"
-                    TEMP_SBOM_DIR="/tmp/auralis-sbom-${BUILD_NUMBER}"
+                    SBOM_VOLUME="auralis-sbom-backend-${BUILD_NUMBER}"
+                    SBOM_FILE="backend-${APP_VERSION}-sbom.json"
 
-                    rm -rf "${TEMP_SBOM_DIR}"
-                    mkdir -p "${TEMP_SBOM_DIR}"
+                    docker volume rm "${SBOM_VOLUME}" >/dev/null 2>&1 || true
+                    docker volume create "${SBOM_VOLUME}" >/dev/null
 
                     echo "Checking backend image..."
-
-                    docker image inspect                         "${APP_IMAGE}:${APP_VERSION}"                         >/dev/null
+                    docker image inspect "${APP_IMAGE}:${APP_VERSION}" >/dev/null
 
                     echo "Running Syft ${SYFT_VERSION}..."
 
-                    docker run --rm                         -v /var/run/docker.sock:/var/run/docker.sock                         -v "${TEMP_SBOM_DIR}:/work"                         ghcr.io/anchore/syft:${SYFT_VERSION}                         "docker:${APP_IMAGE}:${APP_VERSION}"                         -o "cyclonedx-json=/work/backend-${APP_VERSION}-sbom.json"
+                    docker run --rm                         -v /var/run/docker.sock:/var/run/docker.sock                         -v "${SBOM_VOLUME}:/work"                         ghcr.io/anchore/syft:${SYFT_VERSION}                         "docker:${APP_IMAGE}:${APP_VERSION}"                         -o "cyclonedx-json=/work/${SBOM_FILE}"
 
-                    echo "Checking temporary SBOM..."
+                    echo "Checking SBOM inside Docker volume..."
 
-                    ls -lah "${TEMP_SBOM_DIR}"
+                    docker run --rm                         -v "${SBOM_VOLUME}:/work:ro"                         alpine:latest                         sh -c "ls -lh /work && test -s /work/${SBOM_FILE}"
 
-                    if [ ! -s "${TEMP_SBOM_DIR}/backend-${APP_VERSION}-sbom.json" ]; then
-                        echo "ERROR: Syft generated an empty or missing backend SBOM."
-                        echo "Syft output directory:"
-                        ls -la "${TEMP_SBOM_DIR}"
-                        exit 1
-                    fi
+                    echo "Copying SBOM from Docker volume to Jenkins workspace..."
 
-                    echo "Copying SBOM to Jenkins workspace..."
+                    docker run --rm                         -v "${SBOM_VOLUME}:/work:ro"                         -v "${WORKSPACE}/sbom:/output"                         alpine:latest                         cp "/work/${SBOM_FILE}" "/output/${SBOM_FILE}"
 
-                    cp                         "${TEMP_SBOM_DIR}/backend-${APP_VERSION}-sbom.json"                         "${SBOM_DIR}/backend-${APP_VERSION}-sbom.json"
+                    echo "Checking Jenkins workspace..."
 
-                    echo "Checking Jenkins workspace SBOM..."
-
-                    if [ ! -s "${SBOM_DIR}/backend-${APP_VERSION}-sbom.json" ]; then
-                        echo "ERROR: Backend SBOM copy failed."
+                    if [ ! -s "${WORKSPACE}/sbom/${SBOM_FILE}" ]; then
+                        echo "ERROR: Backend SBOM was not copied to Jenkins workspace."
+                        ls -lah "${WORKSPACE}/sbom"
+                        docker volume rm "${SBOM_VOLUME}" >/dev/null 2>&1 || true
                         exit 1
                     fi
 
                     echo "Backend SBOM generated successfully:"
-                    ls -lh "${SBOM_DIR}/backend-${APP_VERSION}-sbom.json"
+                    ls -lh "${WORKSPACE}/sbom/${SBOM_FILE}"
 
-                    rm -rf "${TEMP_SBOM_DIR}"
+                    docker volume rm "${SBOM_VOLUME}" >/dev/null
                 '''
             }
         }
@@ -335,46 +326,40 @@ pipeline {
 
                     echo "===== Frontend SBOM Generation ====="
 
-                    SBOM_DIR="${WORKSPACE}/sbom"
-                    TEMP_SBOM_DIR="/tmp/auralis-sbom-${BUILD_NUMBER}"
+                    SBOM_VOLUME="auralis-sbom-frontend-${BUILD_NUMBER}"
+                    SBOM_FILE="frontend-${APP_VERSION}-sbom.json"
 
-                    rm -rf "${TEMP_SBOM_DIR}"
-                    mkdir -p "${TEMP_SBOM_DIR}"
+                    docker volume rm "${SBOM_VOLUME}" >/dev/null 2>&1 || true
+                    docker volume create "${SBOM_VOLUME}" >/dev/null
 
                     echo "Checking frontend image..."
-
-                    docker image inspect                         "${FRONTEND_IMAGE}:${APP_VERSION}"                         >/dev/null
+                    docker image inspect "${FRONTEND_IMAGE}:${APP_VERSION}" >/dev/null
 
                     echo "Running Syft ${SYFT_VERSION}..."
 
-                    docker run --rm                         -v /var/run/docker.sock:/var/run/docker.sock                         -v "${TEMP_SBOM_DIR}:/work"                         ghcr.io/anchore/syft:${SYFT_VERSION}                         "docker:${FRONTEND_IMAGE}:${APP_VERSION}"                         -o "cyclonedx-json=/work/frontend-${APP_VERSION}-sbom.json"
+                    docker run --rm                         -v /var/run/docker.sock:/var/run/docker.sock                         -v "${SBOM_VOLUME}:/work"                         ghcr.io/anchore/syft:${SYFT_VERSION}                         "docker:${FRONTEND_IMAGE}:${APP_VERSION}"                         -o "cyclonedx-json=/work/${SBOM_FILE}"
 
-                    echo "Checking temporary SBOM..."
+                    echo "Checking SBOM inside Docker volume..."
 
-                    ls -lah "${TEMP_SBOM_DIR}"
+                    docker run --rm                         -v "${SBOM_VOLUME}:/work:ro"                         alpine:latest                         sh -c "ls -lh /work && test -s /work/${SBOM_FILE}"
 
-                    if [ ! -s "${TEMP_SBOM_DIR}/frontend-${APP_VERSION}-sbom.json" ]; then
-                        echo "ERROR: Syft generated an empty or missing frontend SBOM."
-                        echo "Syft output directory:"
-                        ls -la "${TEMP_SBOM_DIR}"
-                        exit 1
-                    fi
+                    echo "Copying SBOM from Docker volume to Jenkins workspace..."
 
-                    echo "Copying SBOM to Jenkins workspace..."
+                    docker run --rm                         -v "${SBOM_VOLUME}:/work:ro"                         -v "${WORKSPACE}/sbom:/output"                         alpine:latest                         cp "/work/${SBOM_FILE}" "/output/${SBOM_FILE}"
 
-                    cp                         "${TEMP_SBOM_DIR}/frontend-${APP_VERSION}-sbom.json"                         "${SBOM_DIR}/frontend-${APP_VERSION}-sbom.json"
+                    echo "Checking Jenkins workspace..."
 
-                    echo "Checking Jenkins workspace SBOM..."
-
-                    if [ ! -s "${SBOM_DIR}/frontend-${APP_VERSION}-sbom.json" ]; then
-                        echo "ERROR: Frontend SBOM copy failed."
+                    if [ ! -s "${WORKSPACE}/sbom/${SBOM_FILE}" ]; then
+                        echo "ERROR: Frontend SBOM was not copied to Jenkins workspace."
+                        ls -lah "${WORKSPACE}/sbom"
+                        docker volume rm "${SBOM_VOLUME}" >/dev/null 2>&1 || true
                         exit 1
                     fi
 
                     echo "Frontend SBOM generated successfully:"
-                    ls -lh "${SBOM_DIR}/frontend-${APP_VERSION}-sbom.json"
+                    ls -lh "${WORKSPACE}/sbom/${SBOM_FILE}"
 
-                    rm -rf "${TEMP_SBOM_DIR}"
+                    docker volume rm "${SBOM_VOLUME}" >/dev/null
                 '''
             }
         }
