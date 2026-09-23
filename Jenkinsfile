@@ -2,25 +2,28 @@ pipeline {
 
     agent any
 
-    tools {
-        nodejs 'NodeJS-22'
-    }
-
     environment {
-
         // Application
+        APP_NAME = "auralis"
         APP_VERSION = "${BUILD_NUMBER}"
 
+        // Docker images
         BACKEND_IMAGE = "auralis-backend"
         FRONTEND_IMAGE = "auralis-frontend"
 
-        // OCIR
-        OCIR_REGISTRY = "hyd.ocir.io"
-        OCIR_REPOSITORY = "hyd.ocir.io/axedsxii3ulu/auralis"
+        // OCI Registry
+        OCI_REGISTRY = "hyd.ocir.io"
+        OCI_NAMESPACE = "axedsxii3ulu"
+        OCI_REPO = "auralis"
 
-        // Syft
+        // Tools
         SYFT_VERSION = "v1.52.0"
-        SBOM_DIR = "sbom"
+
+        // SonarQube
+        SONARQUBE_SERVER = "SonarQube"
+
+        // GitHub
+        GITOPS_REPO = "https://github.com/0x1k4rt1k/auralis-web3-music.git"
     }
 
     stages {
@@ -31,7 +34,22 @@ pipeline {
 
         stage('Checkout') {
             steps {
+                echo "======================================"
+                echo "Checking out source code"
+                echo "======================================"
+
                 checkout scm
+
+                sh '''
+                    echo "Git commit:"
+                    git rev-parse HEAD
+
+                    echo "Git branch:"
+                    git branch --show-current
+
+                    echo "Git status:"
+                    git status --short
+                '''
             }
         }
 
@@ -44,7 +62,7 @@ pipeline {
             steps {
                 sh '''
                     echo "======================================"
-                    echo "Environment Information"
+                    echo "Environment Check"
                     echo "======================================"
 
                     echo "Node:"
@@ -59,13 +77,8 @@ pipeline {
                     echo "Docker:"
                     docker --version
 
-                    echo "Build Number:"
+                    echo "Jenkins Build:"
                     echo "${BUILD_NUMBER}"
-
-                    echo "Application Version:"
-                    echo "${APP_VERSION}"
-
-                    echo "======================================"
                 '''
             }
         }
@@ -79,13 +92,11 @@ pipeline {
             steps {
                 dir('backend') {
                     sh '''
-                        set -e
-
-                        echo "Installing backend dependencies..."
+                        echo "======================================"
+                        echo "Installing Backend Dependencies"
+                        echo "======================================"
 
                         npm ci
-
-                        echo "Backend dependencies installed successfully."
                     '''
                 }
             }
@@ -100,13 +111,11 @@ pipeline {
             steps {
                 dir('backend') {
                     sh '''
-                        set -e
-
-                        echo "Running unit tests..."
+                        echo "======================================"
+                        echo "Running Unit Tests"
+                        echo "======================================"
 
                         npm test
-
-                        echo "Unit tests completed successfully."
                     '''
                 }
             }
@@ -121,70 +130,12 @@ pipeline {
             steps {
                 dir('backend') {
                     sh '''
-                        set -e
-
-                        echo "Running ESLint..."
+                        echo "======================================"
+                        echo "Running ESLint"
+                        echo "======================================"
 
                         npm run lint
-
-                        echo "ESLint completed successfully."
                     '''
-                }
-            }
-        }
-
-
-        // ============================================================
-        // SONARQUBE SAST
-        // ============================================================
-
-        stage('SonarQube SAST') {
-            steps {
-
-                script {
-
-                    def scannerHome = tool 'SonarScanner'
-
-                    withSonarQubeEnv('SonarQube') {
-
-                        withCredentials([
-                            string(
-                                credentialsId: 'sonar-token',
-                                variable: 'SONAR_TOKEN'
-                            )
-                        ]) {
-
-                            sh """
-                                set -e
-
-                                echo "Running SonarQube SAST..."
-
-                                ${scannerHome}/bin/sonar-scanner \
-                                  -Dsonar.projectKey=auralis-web3-music \
-                                  -Dsonar.projectName=auralis-web3-music \
-                                  -Dsonar.sources=backend \
-                                  -Dsonar.host.url=\${SONAR_HOST_URL} \
-                                  -Dsonar.token=\${SONAR_TOKEN}
-
-                                echo "SonarQube analysis completed."
-                            """
-                        }
-                    }
-                }
-            }
-        }
-
-
-        // ============================================================
-        // SONARQUBE QUALITY GATE
-        // ============================================================
-
-        stage('SonarQube Quality Gate') {
-            steps {
-
-                timeout(time: 10, unit: 'MINUTES') {
-
-                    waitForQualityGate abortPipeline: false
                 }
             }
         }
@@ -196,20 +147,18 @@ pipeline {
 
         stage('Gitleaks') {
             steps {
-
                 sh '''
-                    set -e
-
-                    echo "Running Gitleaks..."
+                    echo "======================================"
+                    echo "Running Gitleaks"
+                    echo "======================================"
 
                     docker run --rm \
-                      -v "${WORKSPACE}:/path" \
-                      zricethezav/gitleaks:latest \
-                      detect \
-                      --source=/path \
-                      --no-banner
-
-                    echo "Gitleaks completed successfully."
+                        -v "$PWD:/repo" \
+                        zricethezav/gitleaks:latest \
+                        detect \
+                        --source=/repo \
+                        --no-banner \
+                        --exit-code 1
                 '''
             }
         }
@@ -222,119 +171,187 @@ pipeline {
         stage('OWASP Dependency-Check') {
             steps {
 
-                script {
+                dependencyCheck(
+                    additionalArguments: '--nvdApiKeyCredentialsId nvd-api-key',
+                    odcInstallation: 'OWASP-Dependency-Check'
+                )
+
+                dependencyCheckPublisher(
+                    pattern: '**/dependency-check-report.xml',
+                    failedTotalCritical: 0,
+                    failedTotalHigh: 0,
+                    unstableTotalCritical: 0,
+                    unstableTotalHigh: 0
+                )
+            }
+        }
+
+
+        // ============================================================
+        // SONARQUBE
+        // ============================================================
+
+        stage('SonarQube Analysis') {
+            steps {
+
+                withSonarQubeEnv("${SONARQUBE_SERVER}") {
 
                     withCredentials([
                         string(
-                            credentialsId: 'nvd-api-key',
-                            variable: 'NVD_API_KEY'
+                            credentialsId: 'sonar-token',
+                            variable: 'SONAR_TOKEN'
                         )
                     ]) {
 
-                        dependencyCheck(
-                            odcInstallation: 'OWASP-Dependency-Check',
-                            additionalArguments: """
-                                --nvdApiKey ${NVD_API_KEY}
-                                --scan backend
-                                --format XML
-                                --format HTML
-                                --out dependency-check-report
-                            """
-                        )
+                        sh '''
+                            echo "======================================"
+                            echo "Running SonarQube Analysis"
+                            echo "======================================"
+
+                            sonar-scanner \
+                              -Dsonar.projectKey=auralis-web3-music \
+                              -Dsonar.projectName=Auralis-Web3-Music \
+                              -Dsonar.sources=backend \
+                              -Dsonar.host.url=$SONAR_HOST_URL \
+                              -Dsonar.token=$SONAR_TOKEN
+                        '''
                     }
                 }
             }
+        }
 
-            post {
-                always {
 
-                    dependencyCheckPublisher(
-                        pattern: 'dependency-check-report/dependency-check-report.xml',
-                        failedTotalCritical: 0,
-                        failedTotalHigh: 0,
-                        stopBuild: false
-                    )
+        // ============================================================
+        // SONAR QUALITY GATE
+        // ============================================================
 
-                    archiveArtifacts(
-                        artifacts: 'dependency-check-report/*',
-                        allowEmptyArchive: true,
-                        fingerprint: true
-                    )
+        stage('SonarQube Quality Gate') {
+            steps {
+                timeout(time: 10, unit: 'MINUTES') {
+
+                    waitForQualityGate abortPipeline: false
                 }
             }
         }
 
 
         // ============================================================
-        // DEPENDENCY SECURITY GATE
+        // TRIVY FILESYSTEM SCAN
         // ============================================================
 
-        stage('Dependency Security Gate') {
+        stage('Trivy Filesystem Scan') {
             steps {
-
                 sh '''
-                    set -e
+                    echo "======================================"
+                    echo "Running Trivy Filesystem Scan"
+                    echo "======================================"
 
-                    echo "Checking Dependency-Check report..."
-
-                    if [ ! -f dependency-check-report/dependency-check-report.xml ]; then
-                        echo "Dependency-Check report not found."
-                        exit 1
-                    fi
-
-                    echo "Dependency-Check report found."
+                    docker run --rm \
+                        -v "$PWD:/src" \
+                        aquasec/trivy:latest \
+                        fs \
+                        --severity HIGH,CRITICAL \
+                        --exit-code 0 \
+                        /src
                 '''
             }
         }
 
 
         // ============================================================
-        // BACKEND DOCKER BUILD
+        // BUILD BACKEND IMAGE
         // ============================================================
 
-        stage('Backend Docker Build') {
+        stage('Build Backend Image') {
             steps {
-
                 sh '''
-                    set -e
-
-                    echo "Building backend Docker image..."
+                    echo "======================================"
+                    echo "Building Backend Docker Image"
+                    echo "======================================"
 
                     docker build \
-                      -t ${BACKEND_IMAGE}:${APP_VERSION} \
-                      -t ${BACKEND_IMAGE}:latest \
-                      ./backend
+                        -t ${BACKEND_IMAGE}:${APP_VERSION} \
+                        -t ${BACKEND_IMAGE}:latest \
+                        ./backend
 
-                    echo "Backend image built successfully."
-
-                    docker images ${BACKEND_IMAGE}
+                    docker image inspect \
+                        ${BACKEND_IMAGE}:${APP_VERSION}
                 '''
             }
         }
 
 
         // ============================================================
-        // BACKEND DOCKER IMAGE CHECK
+        // BUILD FRONTEND IMAGE
         // ============================================================
 
-        stage('Backend Docker Image Check') {
+        stage('Build Frontend Image') {
             steps {
-
                 sh '''
-                    set -e
+                    echo "======================================"
+                    echo "Building Frontend Docker Image"
+                    echo "======================================"
 
-                    echo "Checking backend Docker image..."
+                    docker build \
+                        -t ${FRONTEND_IMAGE}:${APP_VERSION} \
+                        -t ${FRONTEND_IMAGE}:latest \
+                        ./frontend
 
-                    docker image inspect ${BACKEND_IMAGE}:${APP_VERSION}
-
-                    echo "Backend Docker image exists."
+                    docker image inspect \
+                        ${FRONTEND_IMAGE}:${APP_VERSION}
                 '''
             }
         }
 
 
         // ============================================================
-        // BACKEND SBOM - SYFT
+        // TRIVY BACKEND IMAGE
+        // ============================================================
+
+        stage('Trivy Backend Image Scan') {
+            steps {
+                sh '''
+                    echo "======================================"
+                    echo "Scanning Backend Image"
+                    echo "======================================"
+
+                    docker run --rm \
+                        -v /var/run/docker.sock:/var/run/docker.sock \
+                        aquasec/trivy:latest \
+                        image \
+                        --severity HIGH,CRITICAL \
+                        --exit-code 0 \
+                        ${BACKEND_IMAGE}:${APP_VERSION}
+                '''
+            }
+        }
+
+
+        // ============================================================
+        // TRIVY FRONTEND IMAGE
+        // ============================================================
+
+        stage('Trivy Frontend Image Scan') {
+            steps {
+                sh '''
+                    echo "======================================"
+                    echo "Scanning Frontend Image"
+                    echo "======================================"
+
+                    docker run --rm \
+                        -v /var/run/docker.sock:/var/run/docker.sock \
+                        aquasec/trivy:latest \
+                        image \
+                        --severity HIGH,CRITICAL \
+                        --exit-code 0 \
+                        ${FRONTEND_IMAGE}:${APP_VERSION}
+                '''
+            }
+        }
+
+
+        // ============================================================
+        // BACKEND SBOM
         // ============================================================
 
         stage('Backend SBOM') {
@@ -349,113 +366,38 @@ pipeline {
                     mkdir -p "${WORKSPACE}/sbom"
 
                     echo "Checking backend image..."
-                    docker image inspect ${BACKEND_IMAGE}:${APP_VERSION} >/dev/null
 
-                    echo "Creating temporary SBOM volume..."
+                    docker image inspect \
+                        "${BACKEND_IMAGE}:${APP_VERSION}" \
+                        >/dev/null
 
-                    docker volume create auralis-sbom-output >/dev/null
+                    echo "Running Syft ${SYFT_VERSION}..."
 
                     docker run --rm \
                         -v /var/run/docker.sock:/var/run/docker.sock \
-                        -v auralis-sbom-output:/work \
                         ghcr.io/anchore/syft:${SYFT_VERSION} \
                         "docker:${BACKEND_IMAGE}:${APP_VERSION}" \
-                        -o "cyclonedx-json=/work/backend-${APP_VERSION}-sbom.json"
-
-                    echo "Copying SBOM from Docker volume..."
-
-                    docker run --rm \
-                        -v auralis-sbom-output:/work \
-                        -v "${WORKSPACE}/sbom:/output" \
-                        alpine:latest \
-                        cp "/work/backend-${APP_VERSION}-sbom.json" \
-                        "/output/backend-${APP_VERSION}-sbom.json"
-
-                    docker volume rm auralis-sbom-output >/dev/null
+                        -o cyclonedx-json=- \
+                        > "${WORKSPACE}/sbom/backend-${APP_VERSION}-sbom.json"
 
                     echo "Checking generated SBOM..."
 
-                    test -s "${WORKSPACE}/sbom/backend-${APP_VERSION}-sbom.json"
+                    if [ ! -s "${WORKSPACE}/sbom/backend-${APP_VERSION}-sbom.json" ]; then
+                        echo "ERROR: Backend SBOM was not generated."
+                        exit 1
+                    fi
 
                     echo "Backend SBOM generated successfully."
 
-                    ls -lh "${WORKSPACE}/sbom/backend-${APP_VERSION}-sbom.json"
+                    ls -lh \
+                        "${WORKSPACE}/sbom/backend-${APP_VERSION}-sbom.json"
                 '''
             }
         }
 
 
         // ============================================================
-        // BACKEND TRIVY
-        // ============================================================
-
-        stage('Backend Trivy Scan') {
-            steps {
-
-                sh '''
-                    echo "Running Trivy backend image scan..."
-
-                    docker run --rm \
-                      -v /var/run/docker.sock:/var/run/docker.sock \
-                      aquasec/trivy:latest \
-                      image \
-                      --severity HIGH,CRITICAL \
-                      --exit-code 0 \
-                      ${BACKEND_IMAGE}:${APP_VERSION}
-
-                    echo "Backend Trivy scan completed."
-                '''
-            }
-        }
-
-
-        // ============================================================
-        // FRONTEND DOCKER BUILD
-        // ============================================================
-
-        stage('Frontend Docker Build') {
-            steps {
-
-                sh '''
-                    set -e
-
-                    echo "Building frontend Docker image..."
-
-                    docker build \
-                      -t ${FRONTEND_IMAGE}:${APP_VERSION} \
-                      -t ${FRONTEND_IMAGE}:latest \
-                      ./frontend
-
-                    echo "Frontend image built successfully."
-
-                    docker images ${FRONTEND_IMAGE}
-                '''
-            }
-        }
-
-
-        // ============================================================
-        // FRONTEND DOCKER IMAGE CHECK
-        // ============================================================
-
-        stage('Frontend Docker Image Check') {
-            steps {
-
-                sh '''
-                    set -e
-
-                    echo "Checking frontend Docker image..."
-
-                    docker image inspect ${FRONTEND_IMAGE}:${APP_VERSION}
-
-                    echo "Frontend Docker image exists."
-                '''
-            }
-        }
-
-
-        // ============================================================
-        // FRONTEND SBOM - SYFT
+        // FRONTEND SBOM
         // ============================================================
 
         stage('Frontend SBOM') {
@@ -470,142 +412,166 @@ pipeline {
                     mkdir -p "${WORKSPACE}/sbom"
 
                     echo "Checking frontend image..."
-                    docker image inspect ${FRONTEND_IMAGE}:${APP_VERSION} >/dev/null
 
-                    echo "Creating temporary SBOM volume..."
+                    docker image inspect \
+                        "${FRONTEND_IMAGE}:${APP_VERSION}" \
+                        >/dev/null
 
-                    docker volume create auralis-frontend-sbom-output >/dev/null
+                    echo "Running Syft ${SYFT_VERSION}..."
 
                     docker run --rm \
                         -v /var/run/docker.sock:/var/run/docker.sock \
-                        -v auralis-frontend-sbom-output:/work \
                         ghcr.io/anchore/syft:${SYFT_VERSION} \
                         "docker:${FRONTEND_IMAGE}:${APP_VERSION}" \
-                        -o "cyclonedx-json=/work/frontend-${APP_VERSION}-sbom.json"
-
-                    echo "Copying SBOM from Docker volume..."
-
-                    docker run --rm \
-                        -v auralis-frontend-sbom-output:/work \
-                        -v "${WORKSPACE}/sbom:/output" \
-                        alpine:latest \
-                        cp "/work/frontend-${APP_VERSION}-sbom.json" \
-                        "/output/frontend-${APP_VERSION}-sbom.json"
-
-                    docker volume rm auralis-frontend-sbom-output >/dev/null
+                        -o cyclonedx-json=- \
+                        > "${WORKSPACE}/sbom/frontend-${APP_VERSION}-sbom.json"
 
                     echo "Checking generated SBOM..."
 
-                    test -s "${WORKSPACE}/sbom/frontend-${APP_VERSION}-sbom.json"
+                    if [ ! -s "${WORKSPACE}/sbom/frontend-${APP_VERSION}-sbom.json" ]; then
+                        echo "ERROR: Frontend SBOM was not generated."
+                        exit 1
+                    fi
 
                     echo "Frontend SBOM generated successfully."
 
-                    ls -lh "${WORKSPACE}/sbom/frontend-${APP_VERSION}-sbom.json"
+                    ls -lh \
+                        "${WORKSPACE}/sbom/frontend-${APP_VERSION}-sbom.json"
                 '''
             }
         }
 
 
         // ============================================================
-        // FRONTEND TRIVY
+        // ARCHIVE SBOM
         // ============================================================
 
-        stage('Frontend Trivy Scan') {
+        stage('Archive SBOM') {
             steps {
+                echo "======================================"
+                echo "Archiving SBOM Files"
+                echo "======================================"
+
+                archiveArtifacts(
+                    artifacts: 'sbom/*.json',
+                    fingerprint: true,
+                    allowEmptyArchive: false
+                )
 
                 sh '''
-                    echo "Running Trivy frontend image scan..."
-
-                    docker run --rm \
-                      -v /var/run/docker.sock:/var/run/docker.sock \
-                      aquasec/trivy:latest \
-                      image \
-                      --severity HIGH,CRITICAL \
-                      --exit-code 0 \
-                      ${FRONTEND_IMAGE}:${APP_VERSION}
-
-                    echo "Frontend Trivy scan completed."
+                    echo "Generated SBOM files:"
+                    ls -lh sbom/
                 '''
             }
         }
 
 
         // ============================================================
-        // OCIR LOGIN AND PUSH
+        // LOGIN TO OCI
         // ============================================================
 
-        stage('Push Images to OCIR') {
+        stage('OCI Registry Login') {
             steps {
 
-                script {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'ocir-credentials',
+                        usernameVariable: 'OCIR_USERNAME',
+                        passwordVariable: 'OCIR_PASSWORD'
+                    )
+                ]) {
 
-                    withCredentials([
-                        usernamePassword(
-                            credentialsId: 'ocir-credentials',
-                            usernameVariable: 'OCIR_USERNAME',
-                            passwordVariable: 'OCIR_PASSWORD'
-                        )
-                    ]) {
+                    sh '''
+                        echo "======================================"
+                        echo "Logging into OCI Registry"
+                        echo "======================================"
 
-                        sh '''
-                            set -e
-
-                            echo "Logging into OCIR..."
-
-                            echo "${OCIR_PASSWORD}" | docker login \
-                              ${OCIR_REGISTRY} \
-                              -u "${OCIR_USERNAME}" \
-                              --password-stdin
-
-                            echo "OCIR login successful."
-
-
-                            echo "Tagging backend image..."
-
-                            docker tag \
-                              ${BACKEND_IMAGE}:${APP_VERSION} \
-                              ${OCIR_REPOSITORY}/${BACKEND_IMAGE}:${APP_VERSION}
-
-                            docker tag \
-                              ${BACKEND_IMAGE}:${APP_VERSION} \
-                              ${OCIR_REPOSITORY}/${BACKEND_IMAGE}:latest
-
-
-                            echo "Pushing backend image..."
-
-                            docker push \
-                              ${OCIR_REPOSITORY}/${BACKEND_IMAGE}:${APP_VERSION}
-
-                            docker push \
-                              ${OCIR_REPOSITORY}/${BACKEND_IMAGE}:latest
-
-
-                            echo "Tagging frontend image..."
-
-                            docker tag \
-                              ${FRONTEND_IMAGE}:${APP_VERSION} \
-                              ${OCIR_REPOSITORY}/${FRONTEND_IMAGE}:${APP_VERSION}
-
-                            docker tag \
-                              ${FRONTEND_IMAGE}:${APP_VERSION} \
-                              ${OCIR_REPOSITORY}/${FRONTEND_IMAGE}:latest
-
-
-                            echo "Pushing frontend image..."
-
-                            docker push \
-                              ${OCIR_REPOSITORY}/${FRONTEND_IMAGE}:${APP_VERSION}
-
-                            docker push \
-                              ${OCIR_REPOSITORY}/${FRONTEND_IMAGE}:latest
-
-
-                            echo "Images pushed successfully."
-
-                            docker logout ${OCIR_REGISTRY}
-                        '''
-                    }
+                        echo "$OCIR_PASSWORD" | docker login \
+                            ${OCI_REGISTRY} \
+                            -u "$OCIR_USERNAME" \
+                            --password-stdin
+                    '''
                 }
+            }
+        }
+
+
+        // ============================================================
+        // TAG BACKEND
+        // ============================================================
+
+        stage('Tag Backend Image') {
+            steps {
+                sh '''
+                    docker tag \
+                        ${BACKEND_IMAGE}:${APP_VERSION} \
+                        ${OCI_REGISTRY}/${OCI_NAMESPACE}/${OCI_REPO}:backend-${APP_VERSION}
+
+                    docker tag \
+                        ${BACKEND_IMAGE}:${APP_VERSION} \
+                        ${OCI_REGISTRY}/${OCI_NAMESPACE}/${OCI_REPO}:backend-latest
+                '''
+            }
+        }
+
+
+        // ============================================================
+        // TAG FRONTEND
+        // ============================================================
+
+        stage('Tag Frontend Image') {
+            steps {
+                sh '''
+                    docker tag \
+                        ${FRONTEND_IMAGE}:${APP_VERSION} \
+                        ${OCI_REGISTRY}/${OCI_NAMESPACE}/${OCI_REPO}:frontend-${APP_VERSION}
+
+                    docker tag \
+                        ${FRONTEND_IMAGE}:${APP_VERSION} \
+                        ${OCI_REGISTRY}/${OCI_NAMESPACE}/${OCI_REPO}:frontend-latest
+                '''
+            }
+        }
+
+
+        // ============================================================
+        // PUSH BACKEND
+        // ============================================================
+
+        stage('Push Backend Image') {
+            steps {
+                sh '''
+                    echo "======================================"
+                    echo "Pushing Backend Image"
+                    echo "======================================"
+
+                    docker push \
+                        ${OCI_REGISTRY}/${OCI_NAMESPACE}/${OCI_REPO}:backend-${APP_VERSION}
+
+                    docker push \
+                        ${OCI_REGISTRY}/${OCI_NAMESPACE}/${OCI_REPO}:backend-latest
+                '''
+            }
+        }
+
+
+        // ============================================================
+        // PUSH FRONTEND
+        // ============================================================
+
+        stage('Push Frontend Image') {
+            steps {
+                sh '''
+                    echo "======================================"
+                    echo "Pushing Frontend Image"
+                    echo "======================================"
+
+                    docker push \
+                        ${OCI_REGISTRY}/${OCI_NAMESPACE}/${OCI_REPO}:frontend-${APP_VERSION}
+
+                    docker push \
+                        ${OCI_REGISTRY}/${OCI_NAMESPACE}/${OCI_REPO}:frontend-latest
+                '''
             }
         }
 
@@ -617,71 +583,49 @@ pipeline {
         stage('Update GitOps Manifests') {
             steps {
 
-                script {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'github-gitops',
+                        usernameVariable: 'GIT_USERNAME',
+                        passwordVariable: 'GIT_TOKEN'
+                    )
+                ]) {
 
-                    withCredentials([
-                        usernamePassword(
-                            credentialsId: 'github-gitops',
-                            usernameVariable: 'GIT_USERNAME',
-                            passwordVariable: 'GIT_PASSWORD'
-                        )
-                    ]) {
+                    sh '''
+                        set -e
 
-                        sh '''
-                            set -e
+                        echo "======================================"
+                        echo "Updating GitOps Manifests"
+                        echo "======================================"
 
-                            echo "======================================"
-                            echo "Updating GitOps manifests"
-                            echo "======================================"
+                        git config user.name "Jenkins"
+                        git config user.email "jenkins@auralis.local"
 
-                            git config user.name "Jenkins"
-                            git config user.email "jenkins@auralis.local"
+                        sed -i \
+                          "s|backend-[0-9][0-9]*|backend-${APP_VERSION}|g" \
+                          k8s/backend.yaml
 
-                            echo "Updating backend image..."
+                        sed -i \
+                          "s|frontend-[0-9][0-9]*|frontend-${APP_VERSION}|g" \
+                          k8s/frontend.yaml
 
-                            sed -i \
-                              "s#image: .*auralis-backend:.*#image: ${OCIR_REPOSITORY}/auralis-backend:${APP_VERSION}#g" \
-                              k8s/backend.yaml
+                        echo "Updated manifests:"
+                        grep -n "image:" k8s/backend.yaml || true
+                        grep -n "image:" k8s/frontend.yaml || true
 
+                        git add k8s/backend.yaml k8s/frontend.yaml
 
-                            echo "Updating frontend image..."
+                        if git diff --cached --quiet; then
+                            echo "No GitOps changes detected."
+                        else
+                            git commit \
+                              -m "chore: update Auralis images to build ${APP_VERSION}"
 
-                            sed -i \
-                              "s#image: .*auralis-frontend:.*#image: ${OCIR_REPOSITORY}/auralis-frontend:${APP_VERSION}#g" \
-                              k8s/frontend.yaml
-
-
-                            echo "Git diff:"
-
-                            git diff -- k8s/backend.yaml k8s/frontend.yaml
-
-
-                            git add \
-                              k8s/backend.yaml \
-                              k8s/frontend.yaml
-
-
-                            if git diff --cached --quiet; then
-
-                                echo "No GitOps changes detected."
-
-                            else
-
-                                git commit \
-                                  -m "Update Auralis images to build ${APP_VERSION} [skip ci]"
-
-
-                                git remote set-url origin \
-                                  "https://${GIT_USERNAME}:${GIT_PASSWORD}@github.com/0x1k4rt1k/auralis-web3-music.git"
-
-
-                                git push origin HEAD:main
-
-                                echo "GitOps manifests pushed successfully."
-
-                            fi
-                        '''
-                    }
+                            git push \
+                              https://${GIT_USERNAME}:${GIT_TOKEN}@github.com/0x1k4rt1k/auralis-web3-music.git \
+                              HEAD:main
+                        fi
+                    '''
                 }
             }
         }
@@ -689,41 +633,58 @@ pipeline {
 
 
     // ================================================================
-    // POST BUILD
+    // POST ACTIONS
     // ================================================================
 
     post {
 
-        always {
-
-            echo "======================================"
-            echo "Archiving SBOM artifacts"
-            echo "======================================"
-
-            archiveArtifacts(
-                artifacts: 'sbom/*.json',
-                allowEmptyArchive: true,
-                fingerprint: true
-            )
-        }
-
-
         success {
+            echo """
+            ======================================
+            AURALIS PIPELINE SUCCESS
+            ======================================
 
-            echo "======================================"
-            echo "AURALIS DEVSECOPS PIPELINE SUCCESS"
-            echo "Build: ${BUILD_NUMBER}"
-            echo "Version: ${APP_VERSION}"
-            echo "======================================"
+            Build: ${BUILD_NUMBER}
+
+            Backend:
+            ${OCI_REGISTRY}/${OCI_NAMESPACE}/${OCI_REPO}:backend-${APP_VERSION}
+
+            Frontend:
+            ${OCI_REGISTRY}/${OCI_NAMESPACE}/${OCI_REPO}:frontend-${APP_VERSION}
+
+            SBOM:
+            Backend -> sbom/backend-${APP_VERSION}-sbom.json
+            Frontend -> sbom/frontend-${APP_VERSION}-sbom.json
+
+            GitOps manifests updated.
+
+            Argo CD should detect the Git change
+            and synchronize the application to OKE.
+            ======================================
+            """
         }
-
 
         failure {
+            echo """
+            ======================================
+            AURALIS PIPELINE FAILED
+            ======================================
 
-            echo "======================================"
-            echo "AURALIS DEVSECOPS PIPELINE FAILED"
-            echo "Build: ${BUILD_NUMBER}"
-            echo "======================================"
+            Build: ${BUILD_NUMBER}
+
+            Check the Jenkins console output
+            for the failed stage.
+
+            ======================================
+            """
+        }
+
+        always {
+            echo "Cleaning temporary workspace files..."
+
+            sh '''
+                rm -rf sbom/*.tmp 2>/dev/null || true
+            '''
         }
     }
 }
