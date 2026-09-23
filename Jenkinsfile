@@ -205,7 +205,9 @@ pipeline {
 
                     SBOM_VOLUME="auralis-sbom-backend-${BUILD_NUMBER}"
                     SBOM_FILE="backend-${APP_VERSION}-sbom.json"
+                    SBOM_CONTAINER="auralis-sbom-extract-backend-${BUILD_NUMBER}"
 
+                    docker rm -f "${SBOM_CONTAINER}" >/dev/null 2>&1 || true
                     docker volume rm "${SBOM_VOLUME}" >/dev/null 2>&1 || true
                     docker volume create "${SBOM_VOLUME}" >/dev/null
 
@@ -214,17 +216,37 @@ pipeline {
 
                     echo "Running Syft ${SYFT_VERSION}..."
 
-                    docker run --rm                         -v /var/run/docker.sock:/var/run/docker.sock                         -v "${SBOM_VOLUME}:/work"                         ghcr.io/anchore/syft:${SYFT_VERSION}                         "docker:${APP_IMAGE}:${APP_VERSION}"                         -o "cyclonedx-json=/work/${SBOM_FILE}"
+                    docker run --rm \
+                        -v /var/run/docker.sock:/var/run/docker.sock \
+                        -v "${SBOM_VOLUME}:/work" \
+                        ghcr.io/anchore/syft:${SYFT_VERSION} \
+                        "docker:${APP_IMAGE}:${APP_VERSION}" \
+                        -o "cyclonedx-json=/work/${SBOM_FILE}"
 
-                    echo "Checking SBOM inside Docker volume..."
+                    echo "Validating SBOM inside Docker volume..."
 
-                    docker run --rm                         -v "${SBOM_VOLUME}:/work:ro"                         alpine:latest                         sh -c "ls -lh /work && test -s /work/${SBOM_FILE}"
+                    docker run --rm \
+                        -v "${SBOM_VOLUME}:/work:ro" \
+                        alpine:latest \
+                        sh -c "test -s /work/${SBOM_FILE} && ls -lh /work/${SBOM_FILE}"
 
-                    echo "Copying SBOM from Docker volume to Jenkins workspace..."
+                    echo "Creating extraction container..."
 
-                    docker run --rm                         -v "${SBOM_VOLUME}:/work:ro"                         -v "${WORKSPACE}/sbom:/output"                         alpine:latest                         cp "/work/${SBOM_FILE}" "/output/${SBOM_FILE}"
+                    docker create \
+                        --name "${SBOM_CONTAINER}" \
+                        -v "${SBOM_VOLUME}:/work:ro" \
+                        alpine:latest \
+                        sh -c "sleep 300" >/dev/null
 
-                    echo "Checking Jenkins workspace..."
+                    echo "Copying SBOM using docker cp..."
+
+                    docker cp \
+                        "${SBOM_CONTAINER}:/work/${SBOM_FILE}" \
+                        "${WORKSPACE}/sbom/${SBOM_FILE}"
+
+                    docker rm -f "${SBOM_CONTAINER}" >/dev/null
+
+                    echo "Checking Jenkins workspace SBOM..."
 
                     if [ ! -s "${WORKSPACE}/sbom/${SBOM_FILE}" ]; then
                         echo "ERROR: Backend SBOM was not copied to Jenkins workspace."
@@ -328,7 +350,9 @@ pipeline {
 
                     SBOM_VOLUME="auralis-sbom-frontend-${BUILD_NUMBER}"
                     SBOM_FILE="frontend-${APP_VERSION}-sbom.json"
+                    SBOM_CONTAINER="auralis-sbom-extract-frontend-${BUILD_NUMBER}"
 
+                    docker rm -f "${SBOM_CONTAINER}" >/dev/null 2>&1 || true
                     docker volume rm "${SBOM_VOLUME}" >/dev/null 2>&1 || true
                     docker volume create "${SBOM_VOLUME}" >/dev/null
 
@@ -337,17 +361,37 @@ pipeline {
 
                     echo "Running Syft ${SYFT_VERSION}..."
 
-                    docker run --rm                         -v /var/run/docker.sock:/var/run/docker.sock                         -v "${SBOM_VOLUME}:/work"                         ghcr.io/anchore/syft:${SYFT_VERSION}                         "docker:${FRONTEND_IMAGE}:${APP_VERSION}"                         -o "cyclonedx-json=/work/${SBOM_FILE}"
+                    docker run --rm \
+                        -v /var/run/docker.sock:/var/run/docker.sock \
+                        -v "${SBOM_VOLUME}:/work" \
+                        ghcr.io/anchore/syft:${SYFT_VERSION} \
+                        "docker:${FRONTEND_IMAGE}:${APP_VERSION}" \
+                        -o "cyclonedx-json=/work/${SBOM_FILE}"
 
-                    echo "Checking SBOM inside Docker volume..."
+                    echo "Validating SBOM inside Docker volume..."
 
-                    docker run --rm                         -v "${SBOM_VOLUME}:/work:ro"                         alpine:latest                         sh -c "ls -lh /work && test -s /work/${SBOM_FILE}"
+                    docker run --rm \
+                        -v "${SBOM_VOLUME}:/work:ro" \
+                        alpine:latest \
+                        sh -c "test -s /work/${SBOM_FILE} && ls -lh /work/${SBOM_FILE}"
 
-                    echo "Copying SBOM from Docker volume to Jenkins workspace..."
+                    echo "Creating extraction container..."
 
-                    docker run --rm                         -v "${SBOM_VOLUME}:/work:ro"                         -v "${WORKSPACE}/sbom:/output"                         alpine:latest                         cp "/work/${SBOM_FILE}" "/output/${SBOM_FILE}"
+                    docker create \
+                        --name "${SBOM_CONTAINER}" \
+                        -v "${SBOM_VOLUME}:/work:ro" \
+                        alpine:latest \
+                        sh -c "sleep 300" >/dev/null
 
-                    echo "Checking Jenkins workspace..."
+                    echo "Copying SBOM using docker cp..."
+
+                    docker cp \
+                        "${SBOM_CONTAINER}:/work/${SBOM_FILE}" \
+                        "${WORKSPACE}/sbom/${SBOM_FILE}"
+
+                    docker rm -f "${SBOM_CONTAINER}" >/dev/null
+
+                    echo "Checking Jenkins workspace SBOM..."
 
                     if [ ! -s "${WORKSPACE}/sbom/${SBOM_FILE}" ]; then
                         echo "ERROR: Frontend SBOM was not copied to Jenkins workspace."
