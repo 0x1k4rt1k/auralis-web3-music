@@ -2,7 +2,20 @@ pipeline {
 
     agent any
 
+    // ============================================================
+    // JENKINS TOOLS
+    // ============================================================
+
+    tools {
+        nodejs 'NodeJS-22'
+    }
+
+    // ============================================================
+    // ENVIRONMENT
+    // ============================================================
+
     environment {
+
         // Application
         APP_NAME = "auralis"
         APP_VERSION = "${BUILD_NUMBER}"
@@ -16,50 +29,26 @@ pipeline {
         OCI_NAMESPACE = "axedsxii3ulu"
         OCI_REPO = "auralis"
 
-        // Tools
+        // SBOM
         SYFT_VERSION = "v1.52.0"
 
         // SonarQube
         SONARQUBE_SERVER = "SonarQube"
-
-        // GitHub
-        GITOPS_REPO = "https://github.com/0x1k4rt1k/auralis-web3-music.git"
     }
+
+    // ============================================================
+    // STAGES
+    // ============================================================
 
     stages {
 
-        // ============================================================
-        // CHECKOUT
-        // ============================================================
-
-        stage('Checkout') {
-            steps {
-                echo "======================================"
-                echo "Checking out source code"
-                echo "======================================"
-
-                checkout scm
-
-                sh '''
-                    echo "Git commit:"
-                    git rev-parse HEAD
-
-                    echo "Git branch:"
-                    git branch --show-current
-
-                    echo "Git status:"
-                    git status --short
-                '''
-            }
-        }
-
-
-        // ============================================================
+        // ========================================================
         // ENVIRONMENT CHECK
-        // ============================================================
+        // ========================================================
 
         stage('Environment Check') {
             steps {
+
                 sh '''
                     echo "======================================"
                     echo "Environment Check"
@@ -79,18 +68,23 @@ pipeline {
 
                     echo "Jenkins Build:"
                     echo "${BUILD_NUMBER}"
+
+                    echo "Workspace:"
+                    pwd
                 '''
             }
         }
 
 
-        // ============================================================
+        // ========================================================
         // INSTALL DEPENDENCIES
-        // ============================================================
+        // ========================================================
 
         stage('Install Dependencies') {
             steps {
+
                 dir('backend') {
+
                     sh '''
                         echo "======================================"
                         echo "Installing Backend Dependencies"
@@ -103,13 +97,15 @@ pipeline {
         }
 
 
-        // ============================================================
+        // ========================================================
         // UNIT TESTS
-        // ============================================================
+        // ========================================================
 
         stage('Unit Tests') {
             steps {
+
                 dir('backend') {
+
                     sh '''
                         echo "======================================"
                         echo "Running Unit Tests"
@@ -122,13 +118,15 @@ pipeline {
         }
 
 
-        // ============================================================
+        // ========================================================
         // ESLINT
-        // ============================================================
+        // ========================================================
 
         stage('ESLint') {
             steps {
+
                 dir('backend') {
+
                     sh '''
                         echo "======================================"
                         echo "Running ESLint"
@@ -141,12 +139,13 @@ pipeline {
         }
 
 
-        // ============================================================
+        // ========================================================
         // GITLEAKS
-        // ============================================================
+        // ========================================================
 
         stage('Gitleaks') {
             steps {
+
                 sh '''
                     echo "======================================"
                     echo "Running Gitleaks"
@@ -164,12 +163,16 @@ pipeline {
         }
 
 
-        // ============================================================
+        // ========================================================
         // OWASP DEPENDENCY CHECK
-        // ============================================================
+        // ========================================================
 
         stage('OWASP Dependency-Check') {
             steps {
+
+                echo "======================================"
+                echo "Running OWASP Dependency-Check"
+                echo "======================================"
 
                 dependencyCheck(
                     additionalArguments: '--nvdApiKeyCredentialsId nvd-api-key',
@@ -187,9 +190,9 @@ pipeline {
         }
 
 
-        // ============================================================
-        // SONARQUBE
-        // ============================================================
+        // ========================================================
+        // SONARQUBE ANALYSIS
+        // ========================================================
 
         stage('SonarQube Analysis') {
             steps {
@@ -209,11 +212,11 @@ pipeline {
                             echo "======================================"
 
                             sonar-scanner \
-                              -Dsonar.projectKey=auralis-web3-music \
-                              -Dsonar.projectName=Auralis-Web3-Music \
-                              -Dsonar.sources=backend \
-                              -Dsonar.host.url=$SONAR_HOST_URL \
-                              -Dsonar.token=$SONAR_TOKEN
+                                -Dsonar.projectKey=auralis-web3-music \
+                                -Dsonar.projectName=Auralis-Web3-Music \
+                                -Dsonar.sources=backend \
+                                -Dsonar.host.url=$SONAR_HOST_URL \
+                                -Dsonar.token=$SONAR_TOKEN
                         '''
                     }
                 }
@@ -221,26 +224,30 @@ pipeline {
         }
 
 
-        // ============================================================
-        // SONAR QUALITY GATE
-        // ============================================================
+        // ========================================================
+        // SONARQUBE QUALITY GATE
+        // ========================================================
 
         stage('SonarQube Quality Gate') {
             steps {
+
                 timeout(time: 10, unit: 'MINUTES') {
 
-                    waitForQualityGate abortPipeline: false
+                    waitForQualityGate(
+                        abortPipeline: false
+                    )
                 }
             }
         }
 
 
-        // ============================================================
+        // ========================================================
         // TRIVY FILESYSTEM SCAN
-        // ============================================================
+        // ========================================================
 
         stage('Trivy Filesystem Scan') {
             steps {
+
                 sh '''
                     echo "======================================"
                     echo "Running Trivy Filesystem Scan"
@@ -258,12 +265,13 @@ pipeline {
         }
 
 
-        // ============================================================
+        // ========================================================
         // BUILD BACKEND IMAGE
-        // ============================================================
+        // ========================================================
 
         stage('Build Backend Image') {
             steps {
+
                 sh '''
                     echo "======================================"
                     echo "Building Backend Docker Image"
@@ -274,6 +282,7 @@ pipeline {
                         -t ${BACKEND_IMAGE}:latest \
                         ./backend
 
+                    echo "Backend image:"
                     docker image inspect \
                         ${BACKEND_IMAGE}:${APP_VERSION}
                 '''
@@ -281,12 +290,13 @@ pipeline {
         }
 
 
-        // ============================================================
+        // ========================================================
         // BUILD FRONTEND IMAGE
-        // ============================================================
+        // ========================================================
 
         stage('Build Frontend Image') {
             steps {
+
                 sh '''
                     echo "======================================"
                     echo "Building Frontend Docker Image"
@@ -297,6 +307,7 @@ pipeline {
                         -t ${FRONTEND_IMAGE}:latest \
                         ./frontend
 
+                    echo "Frontend image:"
                     docker image inspect \
                         ${FRONTEND_IMAGE}:${APP_VERSION}
                 '''
@@ -304,15 +315,16 @@ pipeline {
         }
 
 
-        // ============================================================
+        // ========================================================
         // TRIVY BACKEND IMAGE
-        // ============================================================
+        // ========================================================
 
         stage('Trivy Backend Image Scan') {
             steps {
+
                 sh '''
                     echo "======================================"
-                    echo "Scanning Backend Image"
+                    echo "Scanning Backend Docker Image"
                     echo "======================================"
 
                     docker run --rm \
@@ -327,15 +339,16 @@ pipeline {
         }
 
 
-        // ============================================================
+        // ========================================================
         // TRIVY FRONTEND IMAGE
-        // ============================================================
+        // ========================================================
 
         stage('Trivy Frontend Image Scan') {
             steps {
+
                 sh '''
                     echo "======================================"
-                    echo "Scanning Frontend Image"
+                    echo "Scanning Frontend Docker Image"
                     echo "======================================"
 
                     docker run --rm \
@@ -350,12 +363,13 @@ pipeline {
         }
 
 
-        // ============================================================
+        // ========================================================
         // BACKEND SBOM
-        // ============================================================
+        // ========================================================
 
         stage('Backend SBOM') {
             steps {
+
                 sh '''
                     set -e
 
@@ -396,12 +410,13 @@ pipeline {
         }
 
 
-        // ============================================================
+        // ========================================================
         // FRONTEND SBOM
-        // ============================================================
+        // ========================================================
 
         stage('Frontend SBOM') {
             steps {
+
                 sh '''
                     set -e
 
@@ -442,12 +457,49 @@ pipeline {
         }
 
 
-        // ============================================================
+        // ========================================================
+        // SBOM VALIDATION
+        // ========================================================
+
+        stage('SBOM Validation') {
+            steps {
+
+                sh '''
+                    set -e
+
+                    echo "======================================"
+                    echo "Validating SBOM Files"
+                    echo "======================================"
+
+                    echo "Backend SBOM:"
+                    ls -lh sbom/backend-${APP_VERSION}-sbom.json
+
+                    echo "Frontend SBOM:"
+                    ls -lh sbom/frontend-${APP_VERSION}-sbom.json
+
+                    echo "Checking JSON format..."
+
+                    python3 -m json.tool \
+                        sbom/backend-${APP_VERSION}-sbom.json \
+                        >/dev/null
+
+                    python3 -m json.tool \
+                        sbom/frontend-${APP_VERSION}-sbom.json \
+                        >/dev/null
+
+                    echo "SBOM JSON validation successful."
+                '''
+            }
+        }
+
+
+        // ========================================================
         // ARCHIVE SBOM
-        // ============================================================
+        // ========================================================
 
         stage('Archive SBOM') {
             steps {
+
                 echo "======================================"
                 echo "Archiving SBOM Files"
                 echo "======================================"
@@ -457,18 +509,13 @@ pipeline {
                     fingerprint: true,
                     allowEmptyArchive: false
                 )
-
-                sh '''
-                    echo "Generated SBOM files:"
-                    ls -lh sbom/
-                '''
             }
         }
 
 
-        // ============================================================
-        // LOGIN TO OCI
-        // ============================================================
+        // ========================================================
+        // OCI LOGIN
+        // ========================================================
 
         stage('OCI Registry Login') {
             steps {
@@ -496,13 +543,16 @@ pipeline {
         }
 
 
-        // ============================================================
+        // ========================================================
         // TAG BACKEND
-        // ============================================================
+        // ========================================================
 
         stage('Tag Backend Image') {
             steps {
+
                 sh '''
+                    echo "Tagging backend image..."
+
                     docker tag \
                         ${BACKEND_IMAGE}:${APP_VERSION} \
                         ${OCI_REGISTRY}/${OCI_NAMESPACE}/${OCI_REPO}:backend-${APP_VERSION}
@@ -515,13 +565,16 @@ pipeline {
         }
 
 
-        // ============================================================
+        // ========================================================
         // TAG FRONTEND
-        // ============================================================
+        // ========================================================
 
         stage('Tag Frontend Image') {
             steps {
+
                 sh '''
+                    echo "Tagging frontend image..."
+
                     docker tag \
                         ${FRONTEND_IMAGE}:${APP_VERSION} \
                         ${OCI_REGISTRY}/${OCI_NAMESPACE}/${OCI_REPO}:frontend-${APP_VERSION}
@@ -534,12 +587,13 @@ pipeline {
         }
 
 
-        // ============================================================
+        // ========================================================
         // PUSH BACKEND
-        // ============================================================
+        // ========================================================
 
         stage('Push Backend Image') {
             steps {
+
                 sh '''
                     echo "======================================"
                     echo "Pushing Backend Image"
@@ -555,12 +609,13 @@ pipeline {
         }
 
 
-        // ============================================================
+        // ========================================================
         // PUSH FRONTEND
-        // ============================================================
+        // ========================================================
 
         stage('Push Frontend Image') {
             steps {
+
                 sh '''
                     echo "======================================"
                     echo "Pushing Frontend Image"
@@ -576,9 +631,9 @@ pipeline {
         }
 
 
-        // ============================================================
-        // UPDATE GITOPS MANIFESTS
-        // ============================================================
+        // ========================================================
+        // UPDATE GITOPS
+        // ========================================================
 
         stage('Update GitOps Manifests') {
             steps {
@@ -602,28 +657,38 @@ pipeline {
                         git config user.email "jenkins@auralis.local"
 
                         sed -i \
-                          "s|backend-[0-9][0-9]*|backend-${APP_VERSION}|g" \
-                          k8s/backend.yaml
+                            "s|backend-[0-9][0-9]*|backend-${APP_VERSION}|g" \
+                            k8s/backend.yaml
 
                         sed -i \
-                          "s|frontend-[0-9][0-9]*|frontend-${APP_VERSION}|g" \
-                          k8s/frontend.yaml
+                            "s|frontend-[0-9][0-9]*|frontend-${APP_VERSION}|g" \
+                            k8s/frontend.yaml
 
-                        echo "Updated manifests:"
-                        grep -n "image:" k8s/backend.yaml || true
-                        grep -n "image:" k8s/frontend.yaml || true
+                        echo ""
+                        echo "Backend image:"
+                        grep "image:" k8s/backend.yaml || true
 
-                        git add k8s/backend.yaml k8s/frontend.yaml
+                        echo ""
+                        echo "Frontend image:"
+                        grep "image:" k8s/frontend.yaml || true
+
+                        git add \
+                            k8s/backend.yaml \
+                            k8s/frontend.yaml
 
                         if git diff --cached --quiet; then
+
                             echo "No GitOps changes detected."
+
                         else
+
                             git commit \
-                              -m "chore: update Auralis images to build ${APP_VERSION}"
+                                -m "chore: update Auralis images to build ${APP_VERSION}"
 
                             git push \
-                              https://${GIT_USERNAME}:${GIT_TOKEN}@github.com/0x1k4rt1k/auralis-web3-music.git \
-                              HEAD:main
+                                https://${GIT_USERNAME}:${GIT_TOKEN}@github.com/0x1k4rt1k/auralis-web3-music.git \
+                                HEAD:main
+
                         fi
                     '''
                 }
@@ -632,57 +697,79 @@ pipeline {
     }
 
 
-    // ================================================================
+    // ============================================================
     // POST ACTIONS
-    // ================================================================
+    // ============================================================
 
     post {
 
         success {
+
             echo """
             ======================================
-            AURALIS PIPELINE SUCCESS
+            AURALIS DEVSECOPS PIPELINE SUCCESS
             ======================================
 
-            Build: ${BUILD_NUMBER}
+            Build:
+            ${BUILD_NUMBER}
 
-            Backend:
+            Backend Image:
             ${OCI_REGISTRY}/${OCI_NAMESPACE}/${OCI_REPO}:backend-${APP_VERSION}
 
-            Frontend:
+            Frontend Image:
             ${OCI_REGISTRY}/${OCI_NAMESPACE}/${OCI_REPO}:frontend-${APP_VERSION}
 
             SBOM:
-            Backend -> sbom/backend-${APP_VERSION}-sbom.json
-            Frontend -> sbom/frontend-${APP_VERSION}-sbom.json
+            sbom/backend-${APP_VERSION}-sbom.json
+            sbom/frontend-${APP_VERSION}-sbom.json
 
-            GitOps manifests updated.
+            Security Checks:
+            - ESLint
+            - Gitleaks
+            - OWASP Dependency-Check
+            - SonarQube
+            - SonarQube Quality Gate
+            - Trivy Filesystem
+            - Trivy Backend Image
+            - Trivy Frontend Image
 
-            Argo CD should detect the Git change
-            and synchronize the application to OKE.
+            Supply Chain:
+            - CycloneDX SBOM generated
+            - SBOM JSON validated
+            - SBOM archived
+
+            Deployment:
+            - Images pushed to OCIR
+            - GitOps manifests updated
+            - Argo CD should synchronize OKE
+
             ======================================
             """
         }
 
         failure {
+
             echo """
             ======================================
-            AURALIS PIPELINE FAILED
+            AURALIS DEVSECOPS PIPELINE FAILED
             ======================================
 
-            Build: ${BUILD_NUMBER}
+            Build:
+            ${BUILD_NUMBER}
 
-            Check the Jenkins console output
-            for the failed stage.
+            Check the failed stage in the
+            Jenkins console output.
 
             ======================================
             """
         }
 
         always {
-            echo "Cleaning temporary workspace files..."
+
+            echo "Pipeline completed."
 
             sh '''
+                echo "Workspace cleanup check..."
                 rm -rf sbom/*.tmp 2>/dev/null || true
             '''
         }
