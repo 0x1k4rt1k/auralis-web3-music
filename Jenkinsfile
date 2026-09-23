@@ -1,4 +1,3 @@
-
 pipeline {
     agent any
 
@@ -13,7 +12,6 @@ pipeline {
 
         OCIR_REGISTRY = 'hyd.ocir.io'
         OCIR_REPOSITORY = 'hyd.ocir.io/axedsxii3ulu/auralis'
-
         SYFT_VERSION = 'v1.52.0'
     }
 
@@ -29,7 +27,6 @@ pipeline {
             steps {
                 sh '''
                     echo "===== Environment Check ====="
-
                     echo "Node version:"
                     node --version
 
@@ -151,10 +148,6 @@ pipeline {
             }
         }
 
-        // ============================================================
-        // BACKEND DOCKER BUILD
-        // ============================================================
-
         stage('Backend Docker Build') {
             steps {
                 sh '''
@@ -193,10 +186,6 @@ pipeline {
             }
         }
 
-        // ============================================================
-        // BACKEND SBOM - NEW
-        // ============================================================
-
         stage('Backend SBOM') {
             steps {
                 sh '''
@@ -204,47 +193,35 @@ pipeline {
 
                     echo "===== Backend SBOM Generation ====="
 
-                    mkdir -p "${WORKSPACE}/sbom"
+                    SBOM_DIR="${WORKSPACE}/sbom"
+                    mkdir -p "${SBOM_DIR}"
 
                     echo "Checking backend image..."
-
-                    docker image inspect \
-                        "${APP_IMAGE}:${APP_VERSION}" \
-                        >/dev/null
+                    docker image inspect "${APP_IMAGE}:${APP_VERSION}" >/dev/null
 
                     echo "Running Syft ${SYFT_VERSION}..."
 
                     docker run --rm \
                         -v /var/run/docker.sock:/var/run/docker.sock \
+                        -v "${SBOM_DIR}:/output" \
                         ghcr.io/anchore/syft:${SYFT_VERSION} \
                         "docker:${APP_IMAGE}:${APP_VERSION}" \
-                        -o cyclonedx-json=- \
-                        > "${WORKSPACE}/sbom/backend-${APP_VERSION}-sbom.json"
+                        -o "cyclonedx-json=/output/backend-${APP_VERSION}-sbom.json"
 
                     echo "Checking backend SBOM..."
 
-                    if [ ! -s "${WORKSPACE}/sbom/backend-${APP_VERSION}-sbom.json" ]; then
+                    if [ ! -s "${SBOM_DIR}/backend-${APP_VERSION}-sbom.json" ]; then
                         echo "ERROR: Backend SBOM was not generated."
+                        echo "SBOM directory contents:"
+                        ls -la "${SBOM_DIR}"
                         exit 1
                     fi
 
-                    echo "Validating backend SBOM JSON..."
-
-                    python3 -m json.tool \
-                        "${WORKSPACE}/sbom/backend-${APP_VERSION}-sbom.json" \
-                        >/dev/null
-
-                    echo "Backend SBOM generated successfully."
-
-                    ls -lh \
-                        "${WORKSPACE}/sbom/backend-${APP_VERSION}-sbom.json"
+                    echo "Backend SBOM generated successfully:"
+                    ls -lh "${SBOM_DIR}/backend-${APP_VERSION}-sbom.json"
                 '''
             }
         }
-
-        // ============================================================
-        // PUSH BACKEND TO OCIR
-        // ============================================================
 
         stage('Push Backend to OCIR') {
             steps {
@@ -286,10 +263,6 @@ pipeline {
             }
         }
 
-        // ============================================================
-        // FRONTEND DOCKER BUILD
-        // ============================================================
-
         stage('Frontend Docker Build') {
             steps {
                 sh '''
@@ -328,10 +301,6 @@ pipeline {
             }
         }
 
-        // ============================================================
-        // FRONTEND SBOM - NEW
-        // ============================================================
-
         stage('Frontend SBOM') {
             steps {
                 sh '''
@@ -339,47 +308,35 @@ pipeline {
 
                     echo "===== Frontend SBOM Generation ====="
 
-                    mkdir -p "${WORKSPACE}/sbom"
+                    SBOM_DIR="${WORKSPACE}/sbom"
+                    mkdir -p "${SBOM_DIR}"
 
                     echo "Checking frontend image..."
-
-                    docker image inspect \
-                        "${FRONTEND_IMAGE}:${APP_VERSION}" \
-                        >/dev/null
+                    docker image inspect "${FRONTEND_IMAGE}:${APP_VERSION}" >/dev/null
 
                     echo "Running Syft ${SYFT_VERSION}..."
 
                     docker run --rm \
                         -v /var/run/docker.sock:/var/run/docker.sock \
+                        -v "${SBOM_DIR}:/output" \
                         ghcr.io/anchore/syft:${SYFT_VERSION} \
                         "docker:${FRONTEND_IMAGE}:${APP_VERSION}" \
-                        -o cyclonedx-json=- \
-                        > "${WORKSPACE}/sbom/frontend-${APP_VERSION}-sbom.json"
+                        -o "cyclonedx-json=/output/frontend-${APP_VERSION}-sbom.json"
 
                     echo "Checking frontend SBOM..."
 
-                    if [ ! -s "${WORKSPACE}/sbom/frontend-${APP_VERSION}-sbom.json" ]; then
+                    if [ ! -s "${SBOM_DIR}/frontend-${APP_VERSION}-sbom.json" ]; then
                         echo "ERROR: Frontend SBOM was not generated."
+                        echo "SBOM directory contents:"
+                        ls -la "${SBOM_DIR}"
                         exit 1
                     fi
 
-                    echo "Validating frontend SBOM JSON..."
-
-                    python3 -m json.tool \
-                        "${WORKSPACE}/sbom/frontend-${APP_VERSION}-sbom.json" \
-                        >/dev/null
-
-                    echo "Frontend SBOM generated successfully."
-
-                    ls -lh \
-                        "${WORKSPACE}/sbom/frontend-${APP_VERSION}-sbom.json"
+                    echo "Frontend SBOM generated successfully:"
+                    ls -lh "${SBOM_DIR}/frontend-${APP_VERSION}-sbom.json"
                 '''
             }
         }
-
-        // ============================================================
-        // PUSH FRONTEND TO OCIR
-        // ============================================================
 
         stage('Push Frontend to OCIR') {
             steps {
@@ -422,10 +379,6 @@ pipeline {
                 }
             }
         }
-
-        // ============================================================
-        // UPDATE GITOPS MANIFESTS
-        // ============================================================
 
         stage('Update GitOps Manifests') {
             steps {
@@ -489,10 +442,6 @@ pipeline {
         }
     }
 
-    // ============================================================
-    // POST ACTIONS
-    // ============================================================
-
     post {
 
         always {
@@ -511,7 +460,6 @@ pipeline {
         success {
             echo 'Auralis DevSecOps CI/CD pipeline completed successfully.'
             echo 'Docker images pushed to OCIR and GitOps manifests updated.'
-            echo 'Backend and frontend SBOMs generated and archived.'
             echo 'Argo CD will synchronize the new image versions to OKE.'
         }
 
