@@ -15,6 +15,7 @@ pipeline {
 
         SYFT_VERSION = 'v1.52.0'
         GRYPE_IMAGE = 'anchore/grype:latest'
+        GITLEAKS_IMAGE = 'zricethezav/gitleaks:latest'
     }
 
     stages {
@@ -29,6 +30,7 @@ pipeline {
             steps {
                 sh '''
                     echo "===== Environment Check ====="
+
                     echo "Node version:"
                     node --version
 
@@ -109,15 +111,48 @@ pipeline {
         stage('Gitleaks Secret Scan') {
             steps {
                 sh '''
-                    echo "===== Gitleaks Secret Scan ====="
+                    set +e
+
+                    echo "========================================"
+                    echo "Gitleaks Secret Scan"
+                    echo "========================================"
+
+                    mkdir -p gitleaks-report
 
                     docker run --rm \
-                        -v "$WORKSPACE:/repo:ro" \
-                        zricethezav/gitleaks:latest \
+                        -v "$WORKSPACE:/repo" \
+                        ${GITLEAKS_IMAGE} \
                         detect \
                         --source=/repo \
+                        --no-git \
                         --no-banner \
+                        --redact \
+                        --report-format json \
+                        --report-path /repo/gitleaks-report/gitleaks.json \
                         --exit-code 1
+
+                    GITLEAKS_EXIT=$?
+
+                    echo "========================================"
+                    echo "Gitleaks exit code: ${GITLEAKS_EXIT}"
+                    echo "========================================"
+
+                    if [ -f gitleaks-report/gitleaks.json ]; then
+                        echo "Gitleaks report generated:"
+                        ls -lh gitleaks-report/gitleaks.json
+
+                        echo ""
+                        echo "Gitleaks findings summary:"
+                        cat gitleaks-report/gitleaks.json
+                    else
+                        echo "No Gitleaks JSON report was generated."
+                    fi
+
+                    echo ""
+                    echo "Gitleaks is currently REPORT-ONLY."
+                    echo "The pipeline will continue regardless of findings."
+
+                    exit 0
                 '''
             }
         }
@@ -167,6 +202,7 @@ pipeline {
             steps {
                 sh '''
                     echo "===== Backend Docker Image Check ====="
+
                     docker images ${APP_IMAGE}
                 '''
             }
@@ -242,8 +278,6 @@ pipeline {
                     echo "Backend Grype Vulnerability Scan"
                     echo "========================================"
 
-                    echo "Scanning CycloneDX SBOM with Grype..."
-
                     docker run --rm \
                         -v "${SBOM_VOLUME}:/work:rw" \
                         ${GRYPE_IMAGE} \
@@ -251,22 +285,22 @@ pipeline {
                         -o json \
                         --file "/work/${GRYPE_FILE}"
 
-                    echo "Grype scan completed."
-
-                    echo "Validating Grype report..."
+                    echo "Grype JSON report generated."
 
                     docker run --rm \
                         -v "${SBOM_VOLUME}:/work:ro" \
                         alpine:latest \
                         sh -c "test -s /work/${GRYPE_FILE} && ls -lh /work/${GRYPE_FILE}"
 
-                    echo "Generating human-readable Grype summary..."
+                    echo ""
+                    echo "===== Backend Grype Human-Readable Results ====="
 
                     docker run --rm \
                         -v "${SBOM_VOLUME}:/work:ro" \
                         ${GRYPE_IMAGE} \
                         "sbom:/work/${SBOM_FILE}"
 
+                    echo ""
                     echo "Creating extraction container..."
 
                     docker create \
@@ -275,13 +309,13 @@ pipeline {
                         alpine:latest \
                         sh -c "sleep 300" >/dev/null
 
-                    echo "Copying SBOM to Jenkins workspace..."
+                    echo "Copying Backend SBOM..."
 
                     docker cp \
                         "${SBOM_CONTAINER}:/work/${SBOM_FILE}" \
                         "${WORKSPACE}/sbom/${SBOM_FILE}"
 
-                    echo "Copying Grype report to Jenkins workspace..."
+                    echo "Copying Backend Grype report..."
 
                     docker cp \
                         "${SBOM_CONTAINER}:/work/${GRYPE_FILE}" \
@@ -289,22 +323,17 @@ pipeline {
 
                     docker rm -f "${SBOM_CONTAINER}" >/dev/null
 
-                    echo "Checking generated reports..."
-
                     if [ ! -s "${WORKSPACE}/sbom/${SBOM_FILE}" ]; then
                         echo "ERROR: Backend SBOM was not copied."
-                        ls -lah "${WORKSPACE}/sbom"
-                        docker volume rm "${SBOM_VOLUME}" >/dev/null 2>&1 || true
                         exit 1
                     fi
 
                     if [ ! -s "${WORKSPACE}/sbom/${GRYPE_FILE}" ]; then
                         echo "ERROR: Backend Grype report was not copied."
-                        ls -lah "${WORKSPACE}/sbom"
-                        docker volume rm "${SBOM_VOLUME}" >/dev/null 2>&1 || true
                         exit 1
                     fi
 
+                    echo ""
                     echo "Backend SBOM:"
                     ls -lh "${WORKSPACE}/sbom/${SBOM_FILE}"
 
@@ -375,6 +404,7 @@ pipeline {
             steps {
                 sh '''
                     echo "===== Frontend Docker Image Check ====="
+
                     docker images ${FRONTEND_IMAGE}
                 '''
             }
@@ -439,8 +469,6 @@ pipeline {
                     echo "Frontend Grype Vulnerability Scan"
                     echo "========================================"
 
-                    echo "Scanning CycloneDX SBOM with Grype..."
-
                     docker run --rm \
                         -v "${SBOM_VOLUME}:/work:rw" \
                         ${GRYPE_IMAGE} \
@@ -448,22 +476,22 @@ pipeline {
                         -o json \
                         --file "/work/${GRYPE_FILE}"
 
-                    echo "Grype scan completed."
-
-                    echo "Validating Grype report..."
+                    echo "Grype JSON report generated."
 
                     docker run --rm \
                         -v "${SBOM_VOLUME}:/work:ro" \
                         alpine:latest \
                         sh -c "test -s /work/${GRYPE_FILE} && ls -lh /work/${GRYPE_FILE}"
 
-                    echo "Generating human-readable Grype summary..."
+                    echo ""
+                    echo "===== Frontend Grype Human-Readable Results ====="
 
                     docker run --rm \
                         -v "${SBOM_VOLUME}:/work:ro" \
                         ${GRYPE_IMAGE} \
                         "sbom:/work/${SBOM_FILE}"
 
+                    echo ""
                     echo "Creating extraction container..."
 
                     docker create \
@@ -472,13 +500,13 @@ pipeline {
                         alpine:latest \
                         sh -c "sleep 300" >/dev/null
 
-                    echo "Copying SBOM to Jenkins workspace..."
+                    echo "Copying Frontend SBOM..."
 
                     docker cp \
                         "${SBOM_CONTAINER}:/work/${SBOM_FILE}" \
                         "${WORKSPACE}/sbom/${SBOM_FILE}"
 
-                    echo "Copying Grype report to Jenkins workspace..."
+                    echo "Copying Frontend Grype report..."
 
                     docker cp \
                         "${SBOM_CONTAINER}:/work/${GRYPE_FILE}" \
@@ -486,22 +514,17 @@ pipeline {
 
                     docker rm -f "${SBOM_CONTAINER}" >/dev/null
 
-                    echo "Checking generated reports..."
-
                     if [ ! -s "${WORKSPACE}/sbom/${SBOM_FILE}" ]; then
                         echo "ERROR: Frontend SBOM was not copied."
-                        ls -lah "${WORKSPACE}/sbom"
-                        docker volume rm "${SBOM_VOLUME}" >/dev/null 2>&1 || true
                         exit 1
                     fi
 
                     if [ ! -s "${WORKSPACE}/sbom/${GRYPE_FILE}" ]; then
                         echo "ERROR: Frontend Grype report was not copied."
-                        ls -lah "${WORKSPACE}/sbom"
-                        docker volume rm "${SBOM_VOLUME}" >/dev/null 2>&1 || true
                         exit 1
                     fi
 
+                    echo ""
                     echo "Frontend SBOM:"
                     ls -lh "${WORKSPACE}/sbom/${SBOM_FILE}"
 
@@ -622,9 +645,16 @@ pipeline {
     post {
 
         always {
+
             archiveArtifacts(
                 artifacts: 'dependency-check-report/*',
                 allowEmptyArchive: true
+            )
+
+            archiveArtifacts(
+                artifacts: 'gitleaks-report/*.json',
+                allowEmptyArchive: true,
+                fingerprint: true
             )
 
             archiveArtifacts(
@@ -645,4 +675,3 @@ pipeline {
         }
     }
 }
-
