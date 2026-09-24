@@ -23,6 +23,25 @@ pipeline {
         stage('Checkout') {
             steps {
                 checkout scm
+
+                script {
+                    env.GIT_COMMIT_SHA = sh(
+                        script: 'git rev-parse HEAD',
+                        returnStdout: true
+                    ).trim()
+
+                    env.GIT_COMMIT_SHORT = sh(
+                        script: 'git rev-parse --short HEAD',
+                        returnStdout: true
+                    ).trim()
+                }
+
+                sh '''
+                    echo "===== Git Information ====="
+                    echo "Commit SHA: ${GIT_COMMIT_SHA}"
+                    echo "Short SHA: ${GIT_COMMIT_SHORT}"
+                    git log -1 --oneline
+                '''
             }
         }
 
@@ -42,6 +61,12 @@ pipeline {
 
                     echo "Docker version:"
                     docker --version
+
+                    echo "Jenkins Build:"
+                    echo "${BUILD_NUMBER}"
+
+                    echo "Git Commit:"
+                    echo "${GIT_COMMIT_SHA}"
                 '''
             }
         }
@@ -133,24 +158,16 @@ pipeline {
 
                     GITLEAKS_EXIT=$?
 
-                    echo "========================================"
                     echo "Gitleaks exit code: ${GITLEAKS_EXIT}"
-                    echo "========================================"
 
                     if [ -f gitleaks-report/gitleaks.json ]; then
                         echo "Gitleaks report generated:"
                         ls -lh gitleaks-report/gitleaks.json
-
-                        echo ""
-                        echo "Gitleaks findings summary:"
-                        cat gitleaks-report/gitleaks.json
                     else
                         echo "No Gitleaks JSON report was generated."
                     fi
 
-                    echo ""
                     echo "Gitleaks is currently REPORT-ONLY."
-                    echo "The pipeline will continue regardless of findings."
 
                     exit 0
                 '''
@@ -204,6 +221,11 @@ pipeline {
                     echo "===== Backend Docker Image Check ====="
 
                     docker images ${APP_IMAGE}
+
+                    echo "Backend Image ID:"
+                    docker image inspect \
+                        --format='{{.Id}}' \
+                        ${APP_IMAGE}:${APP_VERSION}
                 '''
             }
         }
@@ -253,8 +275,6 @@ pipeline {
                     docker volume rm "${SBOM_VOLUME}" >/dev/null 2>&1 || true
                     docker volume create "${SBOM_VOLUME}" >/dev/null
 
-                    echo "Checking backend image..."
-
                     docker image inspect \
                         "${APP_IMAGE}:${APP_VERSION}" >/dev/null
 
@@ -285,7 +305,7 @@ pipeline {
                         -o json \
                         --file "/work/${GRYPE_FILE}"
 
-                    echo "Grype JSON report generated."
+                    echo "Grype report generated."
 
                     docker run --rm \
                         -v "${SBOM_VOLUME}:/work:ro" \
@@ -293,14 +313,13 @@ pipeline {
                         sh -c "test -s /work/${GRYPE_FILE} && ls -lh /work/${GRYPE_FILE}"
 
                     echo ""
-                    echo "===== Backend Grype Human-Readable Results ====="
+                    echo "===== Backend Grype Results ====="
 
                     docker run --rm \
                         -v "${SBOM_VOLUME}:/work:ro" \
                         ${GRYPE_IMAGE} \
                         "sbom:/work/${SBOM_FILE}"
 
-                    echo ""
                     echo "Creating extraction container..."
 
                     docker create \
@@ -309,13 +328,9 @@ pipeline {
                         alpine:latest \
                         sh -c "sleep 300" >/dev/null
 
-                    echo "Copying Backend SBOM..."
-
                     docker cp \
                         "${SBOM_CONTAINER}:/work/${SBOM_FILE}" \
                         "${WORKSPACE}/sbom/${SBOM_FILE}"
-
-                    echo "Copying Backend Grype report..."
 
                     docker cp \
                         "${SBOM_CONTAINER}:/work/${GRYPE_FILE}" \
@@ -333,7 +348,6 @@ pipeline {
                         exit 1
                     fi
 
-                    echo ""
                     echo "Backend SBOM:"
                     ls -lh "${WORKSPACE}/sbom/${SBOM_FILE}"
 
@@ -382,6 +396,11 @@ pipeline {
                             ${OCIR_REPOSITORY}:backend-latest
 
                         echo "===== Backend OCIR Push Completed ====="
+
+                        echo "Backend remote digest information:"
+                        docker image inspect \
+                            --format='{{json .RepoDigests}}' \
+                            ${OCIR_REPOSITORY}:backend-${APP_VERSION} || true
                     '''
                 }
             }
@@ -406,6 +425,11 @@ pipeline {
                     echo "===== Frontend Docker Image Check ====="
 
                     docker images ${FRONTEND_IMAGE}
+
+                    echo "Frontend Image ID:"
+                    docker image inspect \
+                        --format='{{.Id}}' \
+                        ${FRONTEND_IMAGE}:${APP_VERSION}
                 '''
             }
         }
@@ -444,8 +468,6 @@ pipeline {
                     docker volume rm "${SBOM_VOLUME}" >/dev/null 2>&1 || true
                     docker volume create "${SBOM_VOLUME}" >/dev/null
 
-                    echo "Checking frontend image..."
-
                     docker image inspect \
                         "${FRONTEND_IMAGE}:${APP_VERSION}" >/dev/null
 
@@ -476,7 +498,7 @@ pipeline {
                         -o json \
                         --file "/work/${GRYPE_FILE}"
 
-                    echo "Grype JSON report generated."
+                    echo "Grype report generated."
 
                     docker run --rm \
                         -v "${SBOM_VOLUME}:/work:ro" \
@@ -484,14 +506,13 @@ pipeline {
                         sh -c "test -s /work/${GRYPE_FILE} && ls -lh /work/${GRYPE_FILE}"
 
                     echo ""
-                    echo "===== Frontend Grype Human-Readable Results ====="
+                    echo "===== Frontend Grype Results ====="
 
                     docker run --rm \
                         -v "${SBOM_VOLUME}:/work:ro" \
                         ${GRYPE_IMAGE} \
                         "sbom:/work/${SBOM_FILE}"
 
-                    echo ""
                     echo "Creating extraction container..."
 
                     docker create \
@@ -500,13 +521,9 @@ pipeline {
                         alpine:latest \
                         sh -c "sleep 300" >/dev/null
 
-                    echo "Copying Frontend SBOM..."
-
                     docker cp \
                         "${SBOM_CONTAINER}:/work/${SBOM_FILE}" \
                         "${WORKSPACE}/sbom/${SBOM_FILE}"
-
-                    echo "Copying Frontend Grype report..."
 
                     docker cp \
                         "${SBOM_CONTAINER}:/work/${GRYPE_FILE}" \
@@ -524,7 +541,6 @@ pipeline {
                         exit 1
                     fi
 
-                    echo ""
                     echo "Frontend SBOM:"
                     ls -lh "${WORKSPACE}/sbom/${SBOM_FILE}"
 
@@ -534,6 +550,67 @@ pipeline {
                     docker volume rm "${SBOM_VOLUME}" >/dev/null
 
                     echo "===== Frontend SBOM + Grype Completed ====="
+                '''
+            }
+        }
+
+        stage('Create SBOM Traceability Metadata') {
+            steps {
+                sh '''
+                    set -e
+
+                    echo "========================================"
+                    echo "SBOM Traceability Metadata"
+                    echo "========================================"
+
+                    BACKEND_IMAGE_ID=$(docker image inspect \
+                        --format='{{.Id}}' \
+                        ${APP_IMAGE}:${APP_VERSION})
+
+                    FRONTEND_IMAGE_ID=$(docker image inspect \
+                        --format='{{.Id}}' \
+                        ${FRONTEND_IMAGE}:${APP_VERSION})
+
+                    BUILD_TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+                    cat > "sbom/traceability-${APP_VERSION}.json" <<EOF
+{
+  "application": "Auralis Web3 Music Streaming Platform",
+  "jenkins": {
+    "job": "${JOB_NAME}",
+    "build_number": "${BUILD_NUMBER}",
+    "build_url": "${BUILD_URL}"
+  },
+  "source": {
+    "repository": "https://github.com/0x1k4rt1k/auralis-web3-music.git",
+    "branch": "main",
+    "commit_sha": "${GIT_COMMIT_SHA}",
+    "commit_short_sha": "${GIT_COMMIT_SHORT}"
+  },
+  "build": {
+    "timestamp": "${BUILD_TIMESTAMP}",
+    "syft_version": "${SYFT_VERSION}",
+    "grype_image": "${GRYPE_IMAGE}"
+  },
+  "backend": {
+    "image": "${OCIR_REPOSITORY}:backend-${APP_VERSION}",
+    "local_image": "${APP_IMAGE}:${APP_VERSION}",
+    "image_id": "${BACKEND_IMAGE_ID}",
+    "sbom": "backend-${APP_VERSION}-sbom.json",
+    "grype_report": "backend-${APP_VERSION}-grype.json"
+  },
+  "frontend": {
+    "image": "${OCIR_REPOSITORY}:frontend-${APP_VERSION}",
+    "local_image": "${FRONTEND_IMAGE}:${APP_VERSION}",
+    "image_id": "${FRONTEND_IMAGE_ID}",
+    "sbom": "frontend-${APP_VERSION}-sbom.json",
+    "grype_report": "frontend-${APP_VERSION}-grype.json"
+  }
+}
+EOF
+
+                    echo "Traceability metadata created:"
+                    cat "sbom/traceability-${APP_VERSION}.json"
                 '''
             }
         }
@@ -573,6 +650,11 @@ pipeline {
                             ${OCIR_REPOSITORY}:frontend-latest
 
                         echo "===== Frontend OCIR Push Completed ====="
+
+                        echo "Frontend remote digest information:"
+                        docker image inspect \
+                            --format='{{json .RepoDigests}}' \
+                            ${OCIR_REPOSITORY}:frontend-${APP_VERSION} || true
 
                         docker logout "$OCIR_REGISTRY"
                     '''
@@ -667,6 +749,7 @@ pipeline {
         success {
             echo 'Auralis DevSecOps CI/CD pipeline completed successfully.'
             echo 'Docker images pushed to OCIR and GitOps manifests updated.'
+            echo 'SBOM traceability metadata archived.'
             echo 'Argo CD will synchronize the new image versions to OKE.'
         }
 
