@@ -504,6 +504,150 @@ pipeline {
             }
         }
 
+        stage('Frontend Docker Build') {
+            steps {
+                sh '''
+                    set -e
+                    echo "===== Frontend Docker Build ====="
+
+                    docker build \
+                        -t ${FRONTEND_IMAGE}:${APP_VERSION} \
+                        -t ${FRONTEND_IMAGE}:latest \
+                        ./frontend
+
+                    echo "Frontend image built:"
+                    docker image inspect ${FRONTEND_IMAGE}:${APP_VERSION} \
+                        --format='{{.Id}}'
+                '''
+            }
+        }
+
+        stage('Frontend Docker Image Check') {
+            steps {
+                sh '''
+                    set -e
+                    echo "===== Frontend Docker Image Check ====="
+                    docker image inspect ${FRONTEND_IMAGE}:${APP_VERSION}
+                    docker images ${FRONTEND_IMAGE}
+                '''
+            }
+        }
+
+        stage('Frontend Trivy Scan') {
+            steps {
+                sh '''
+                    echo "===== Frontend Trivy Security Scan ====="
+
+                    docker run --rm \
+                        -v /var/run/docker.sock:/var/run/docker.sock \
+                        aquasec/trivy:latest \
+                        image \
+                        --severity HIGH,CRITICAL \
+                        --exit-code 0 \
+                        ${FRONTEND_IMAGE}:${APP_VERSION}
+                '''
+            }
+        }
+
+        stage('Frontend SBOM + Grype') {
+            steps {
+                sh '''
+                    set -e
+
+                    echo "========================================"
+                    echo "Frontend SBOM + Grype"
+                    echo "========================================"
+
+                    SBOM_VOLUME="auralis-sbom-frontend-${BUILD_NUMBER}"
+                    SBOM_FILE="frontend-${APP_VERSION}-sbom.json"
+                    GRYPE_FILE="frontend-${APP_VERSION}-grype.json"
+                    SBOM_CONTAINER="auralis-sbom-extract-frontend-${BUILD_NUMBER}"
+
+                    docker rm -f "${SBOM_CONTAINER}" >/dev/null 2>&1 || true
+                    docker volume rm "${SBOM_VOLUME}" >/dev/null 2>&1 || true
+                    docker volume create "${SBOM_VOLUME}" >/dev/null
+
+                    echo "Checking frontend image..."
+                    docker image inspect "${FRONTEND_IMAGE}:${APP_VERSION}" >/dev/null
+
+                    echo "Running Syft ${SYFT_VERSION}..."
+
+                    docker run --rm \
+                        -v /var/run/docker.sock:/var/run/docker.sock \
+                        -v "${SBOM_VOLUME}:/work" \
+                        ghcr.io/anchore/syft:${SYFT_VERSION} \
+                        "docker:${FRONTEND_IMAGE}:${APP_VERSION}" \
+                        -o "cyclonedx-json=/work/${SBOM_FILE}"
+
+                    docker run --rm \
+                        -v "${SBOM_VOLUME}:/work:ro" \
+                        alpine:latest \
+                        sh -c "test -s /work/${SBOM_FILE} && ls -lh /work/${SBOM_FILE}"
+
+                    echo "Running Grype ${GRYPE_IMAGE}..."
+
+                    docker run --rm \
+                        -v "${SBOM_VOLUME}:/work:rw" \
+                        ${GRYPE_IMAGE} \
+                        "sbom:/work/${SBOM_FILE}" \
+                        -o json \
+                        --file "/work/${GRYPE_FILE}"
+
+                    echo "===== Frontend Grype Results ====="
+
+                    docker run --rm \
+                        -v "${SBOM_VOLUME}:/work:ro" \
+                        ${GRYPE_IMAGE} \
+                        "sbom:/work/${SBOM_FILE}"
+
+                    docker run --rm \
+                        -v "${SBOM_VOLUME}:/work:ro" \
+                        alpine:latest \
+                        sh -c "test -s /work/${GRYPE_FILE} && ls -lh /work/${GRYPE_FILE}"
+
+                    echo "Creating extraction container..."
+
+                    docker create \
+                        --name "${SBOM_CONTAINER}" \
+                        -v "${SBOM_VOLUME}:/work:ro" \
+                        alpine:latest \
+                        sh -c "sleep 300" >/dev/null
+
+                    docker cp \
+                        "${SBOM_CONTAINER}:/work/${SBOM_FILE}" \
+                        "${WORKSPACE}/sbom/${SBOM_FILE}"
+
+                    docker cp \
+                        "${SBOM_CONTAINER}:/work/${GRYPE_FILE}" \
+                        "${WORKSPACE}/sbom/${GRYPE_FILE}"
+
+                    docker rm -f "${SBOM_CONTAINER}" >/dev/null
+
+                    if [ ! -s "${WORKSPACE}/sbom/${SBOM_FILE}" ]; then
+                        echo "ERROR: Frontend SBOM was not copied."
+                        docker volume rm "${SBOM_VOLUME}" >/dev/null 2>&1 || true
+                        exit 1
+                    fi
+
+                    if [ ! -s "${WORKSPACE}/sbom/${GRYPE_FILE}" ]; then
+                        echo "ERROR: Frontend Grype report was not copied."
+                        docker volume rm "${SBOM_VOLUME}" >/dev/null 2>&1 || true
+                        exit 1
+                    fi
+
+                    echo "Frontend SBOM:"
+                    ls -lh "${WORKSPACE}/sbom/${SBOM_FILE}"
+
+                    echo "Frontend Grype report:"
+                    ls -lh "${WORKSPACE}/sbom/${GRYPE_FILE}"
+
+                    docker volume rm "${SBOM_VOLUME}" >/dev/null
+
+                    echo "===== Frontend SBOM + Grype Completed ====="
+                '''
+            }
+        }
+
         stage('Push Frontend to OCIR') {
             steps {
                 withCredentials([
