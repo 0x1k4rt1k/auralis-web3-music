@@ -16,6 +16,7 @@ pipeline {
         SYFT_VERSION = 'v1.52.0'
         GRYPE_IMAGE = 'anchore/grype:latest'
         GITLEAKS_IMAGE = 'zricethezav/gitleaks:latest'
+        COSIGN_IMAGE = 'ghcr.io/sigstore/cosign/cosign:latest'
     }
 
     stages {
@@ -406,6 +407,99 @@ pipeline {
             }
         }
 
+        stage('Cosign Sign Backend') {
+            steps {
+                withCredentials([
+                    file(credentialsId: 'cosign-private-key', variable: 'COSIGN_KEY'),
+                    string(credentialsId: 'cosign-key-password', variable: 'COSIGN_PASSWORD'),
+                    usernamePassword(
+                        credentialsId: 'ocir-credentials',
+                        usernameVariable: 'OCIR_USERNAME',
+                        passwordVariable: 'OCIR_TOKEN'
+                    )
+                ]) {
+                    sh '''
+                        set -e
+
+                        echo "========================================"
+                        echo "Cosign Backend Image Signing"
+                        echo "========================================"
+
+                        BACKEND_DIGEST=$(docker image inspect \
+                            --format='{{index .RepoDigests 0}}' \
+                            ${OCIR_REPOSITORY}:backend-${APP_VERSION})
+
+                        if [ -z "${BACKEND_DIGEST}" ] || [ "${BACKEND_DIGEST}" = "<no value>" ]; then
+                            echo "ERROR: Could not determine backend OCIR digest."
+                            exit 1
+                        fi
+
+                        echo "Backend image digest:"
+                        echo "${BACKEND_DIGEST}"
+
+                        docker run --rm \
+                            --user 0:0 \
+                            -v "${COSIGN_KEY}:/cosign.key:ro" \
+                            -w / \
+                            -e COSIGN_PASSWORD \
+                            ${COSIGN_IMAGE} \
+                            sign \
+                            --key /cosign.key \
+                            --registry-username "${OCIR_USERNAME}" \
+                            --registry-password "${OCIR_TOKEN}" \
+                            "${BACKEND_DIGEST}"
+
+                        echo "===== Backend Cosign Signing Completed ====="
+                    '''
+                }
+            }
+        }
+
+        stage('Cosign Verify Backend') {
+            steps {
+                withCredentials([
+                    file(credentialsId: 'cosign-public-key', variable: 'COSIGN_PUBLIC_KEY'),
+                    usernamePassword(
+                        credentialsId: 'ocir-credentials',
+                        usernameVariable: 'OCIR_USERNAME',
+                        passwordVariable: 'OCIR_TOKEN'
+                    )
+                ]) {
+                    sh '''
+                        set -e
+
+                        echo "========================================"
+                        echo "Cosign Backend Signature Verification"
+                        echo "========================================"
+
+                        BACKEND_DIGEST=$(docker image inspect \
+                            --format='{{index .RepoDigests 0}}' \
+                            ${OCIR_REPOSITORY}:backend-${APP_VERSION})
+
+                        if [ -z "${BACKEND_DIGEST}" ] || [ "${BACKEND_DIGEST}" = "<no value>" ]; then
+                            echo "ERROR: Could not determine backend OCIR digest."
+                            exit 1
+                        fi
+
+                        echo "Verifying backend:"
+                        echo "${BACKEND_DIGEST}"
+
+                        docker run --rm \
+                            --user 0:0 \
+                            -v "${COSIGN_PUBLIC_KEY}:/cosign.pub:ro" \
+                            ${COSIGN_IMAGE} \
+                            verify \
+                            --key /cosign.pub \
+                            --registry-username "${OCIR_USERNAME}" \
+                            --registry-password "${OCIR_TOKEN}" \
+                            "${BACKEND_DIGEST}"
+
+                        echo "===== Backend Cosign Verification Completed ====="
+                    '''
+                }
+            }
+        }
+
         stage('Frontend Docker Build') {
             steps {
                 sh '''
@@ -573,6 +667,10 @@ pipeline {
 
                     BUILD_TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
+                    BACKEND_DIGEST=$(docker image inspect                         --format='{{index .RepoDigests 0}}'                         ${OCIR_REPOSITORY}:backend-${APP_VERSION})
+
+                    FRONTEND_DIGEST=$(docker image inspect                         --format='{{index .RepoDigests 0}}'                         ${OCIR_REPOSITORY}:frontend-${APP_VERSION})
+
                     cat > "sbom/traceability-${APP_VERSION}.json" <<EOF
 {
   "application": "Auralis Web3 Music Streaming Platform",
@@ -590,7 +688,8 @@ pipeline {
   "build": {
     "timestamp": "${BUILD_TIMESTAMP}",
     "syft_version": "${SYFT_VERSION}",
-    "grype_image": "${GRYPE_IMAGE}"
+    "grype_image": "${GRYPE_IMAGE}",
+    "cosign_image": "${COSIGN_IMAGE}"
   },
   "backend": {
     "image": "${OCIR_REPOSITORY}:backend-${APP_VERSION}",
@@ -605,6 +704,13 @@ pipeline {
     "image_id": "${FRONTEND_IMAGE_ID}",
     "sbom": "frontend-${APP_VERSION}-sbom.json",
     "grype_report": "frontend-${APP_VERSION}-grype.json"
+  },
+  "signing": {
+    "backend": "cosign",
+    "backend_digest": "${BACKEND_DIGEST}",
+    "frontend": "cosign",
+    "frontend_digest": "${FRONTEND_DIGEST}",
+    "verification": "cosign public-key verification"
   }
 }
 EOF
@@ -657,6 +763,99 @@ EOF
                             ${OCIR_REPOSITORY}:frontend-${APP_VERSION} || true
 
                         docker logout "$OCIR_REGISTRY"
+                    '''
+                }
+            }
+        }
+
+        stage('Cosign Sign Frontend') {
+            steps {
+                withCredentials([
+                    file(credentialsId: 'cosign-private-key', variable: 'COSIGN_KEY'),
+                    string(credentialsId: 'cosign-key-password', variable: 'COSIGN_PASSWORD'),
+                    usernamePassword(
+                        credentialsId: 'ocir-credentials',
+                        usernameVariable: 'OCIR_USERNAME',
+                        passwordVariable: 'OCIR_TOKEN'
+                    )
+                ]) {
+                    sh '''
+                        set -e
+
+                        echo "========================================"
+                        echo "Cosign Frontend Image Signing"
+                        echo "========================================"
+
+                        FRONTEND_DIGEST=$(docker image inspect \
+                            --format='{{index .RepoDigests 0}}' \
+                            ${OCIR_REPOSITORY}:frontend-${APP_VERSION})
+
+                        if [ -z "${FRONTEND_DIGEST}" ] || [ "${FRONTEND_DIGEST}" = "<no value>" ]; then
+                            echo "ERROR: Could not determine frontend OCIR digest."
+                            exit 1
+                        fi
+
+                        echo "Frontend image digest:"
+                        echo "${FRONTEND_DIGEST}"
+
+                        docker run --rm \
+                            --user 0:0 \
+                            -v "${COSIGN_KEY}:/cosign.key:ro" \
+                            -w / \
+                            -e COSIGN_PASSWORD \
+                            ${COSIGN_IMAGE} \
+                            sign \
+                            --key /cosign.key \
+                            --registry-username "${OCIR_USERNAME}" \
+                            --registry-password "${OCIR_TOKEN}" \
+                            "${FRONTEND_DIGEST}"
+
+                        echo "===== Frontend Cosign Signing Completed ====="
+                    '''
+                }
+            }
+        }
+
+        stage('Cosign Verify Frontend') {
+            steps {
+                withCredentials([
+                    file(credentialsId: 'cosign-public-key', variable: 'COSIGN_PUBLIC_KEY'),
+                    usernamePassword(
+                        credentialsId: 'ocir-credentials',
+                        usernameVariable: 'OCIR_USERNAME',
+                        passwordVariable: 'OCIR_TOKEN'
+                    )
+                ]) {
+                    sh '''
+                        set -e
+
+                        echo "========================================"
+                        echo "Cosign Frontend Signature Verification"
+                        echo "========================================"
+
+                        FRONTEND_DIGEST=$(docker image inspect \
+                            --format='{{index .RepoDigests 0}}' \
+                            ${OCIR_REPOSITORY}:frontend-${APP_VERSION})
+
+                        if [ -z "${FRONTEND_DIGEST}" ] || [ "${FRONTEND_DIGEST}" = "<no value>" ]; then
+                            echo "ERROR: Could not determine frontend OCIR digest."
+                            exit 1
+                        fi
+
+                        echo "Verifying frontend:"
+                        echo "${FRONTEND_DIGEST}"
+
+                        docker run --rm \
+                            --user 0:0 \
+                            -v "${COSIGN_PUBLIC_KEY}:/cosign.pub:ro" \
+                            ${COSIGN_IMAGE} \
+                            verify \
+                            --key /cosign.pub \
+                            --registry-username "${OCIR_USERNAME}" \
+                            --registry-password "${OCIR_TOKEN}" \
+                            "${FRONTEND_DIGEST}"
+
+                        echo "===== Frontend Cosign Verification Completed ====="
                     '''
                 }
             }
@@ -750,6 +949,7 @@ EOF
             echo 'Auralis DevSecOps CI/CD pipeline completed successfully.'
             echo 'Docker images pushed to OCIR and GitOps manifests updated.'
             echo 'SBOM traceability metadata archived.'
+            echo 'Cosign signatures created and verified for backend and frontend.'
             echo 'Argo CD will synchronize the new image versions to OKE.'
         }
 
