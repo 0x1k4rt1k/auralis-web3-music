@@ -14,7 +14,7 @@ spec:
         app: auralis-backend
     spec:
       imagePullSecrets:
-        - name: ocir-secret
+        - name: ocir-pull-secret
       containers:
         - name: backend
           image: hyd.ocir.io/axedsxii3ulu/auralis:backend-37
