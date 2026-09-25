@@ -504,79 +504,6 @@ pipeline {
             }
         }
 
-        stage('Create SBOM Traceability Metadata') {
-            steps {
-                sh '''
-                    set -e
-
-                    echo "========================================"
-                    echo "SBOM Traceability Metadata"
-                    echo "========================================"
-
-                    BACKEND_IMAGE_ID=$(docker image inspect \
-                        --format='{{.Id}}' \
-                        ${APP_IMAGE}:${APP_VERSION})
-
-                    FRONTEND_IMAGE_ID=$(docker image inspect \
-                        --format='{{.Id}}' \
-                        ${FRONTEND_IMAGE}:${APP_VERSION})
-
-                    BUILD_TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-
-                    BACKEND_DIGEST=$(docker image inspect                         --format='{{index .RepoDigests 0}}'                         ${OCIR_REPOSITORY}:backend-${APP_VERSION})
-
-                    FRONTEND_DIGEST=$(docker image inspect                         --format='{{index .RepoDigests 0}}'                         ${OCIR_REPOSITORY}:frontend-${APP_VERSION})
-
-                    cat > "sbom/traceability-${APP_VERSION}.json" <<EOF
-{
-  "application": "Auralis Web3 Music Streaming Platform",
-  "jenkins": {
-    "job": "${JOB_NAME}",
-    "build_number": "${BUILD_NUMBER}",
-    "build_url": "${BUILD_URL}"
-  },
-  "source": {
-    "repository": "https://github.com/0x1k4rt1k/auralis-web3-music.git",
-    "branch": "main",
-    "commit_sha": "${GIT_COMMIT_SHA}",
-    "commit_short_sha": "${GIT_COMMIT_SHORT}"
-  },
-  "build": {
-    "timestamp": "${BUILD_TIMESTAMP}",
-    "syft_version": "${SYFT_VERSION}",
-    "grype_image": "${GRYPE_IMAGE}",
-    "cosign_image": "${COSIGN_IMAGE}"
-  },
-  "backend": {
-    "image": "${OCIR_REPOSITORY}:backend-${APP_VERSION}",
-    "local_image": "${APP_IMAGE}:${APP_VERSION}",
-    "image_id": "${BACKEND_IMAGE_ID}",
-    "sbom": "backend-${APP_VERSION}-sbom.json",
-    "grype_report": "backend-${APP_VERSION}-grype.json"
-  },
-  "frontend": {
-    "image": "${OCIR_REPOSITORY}:frontend-${APP_VERSION}",
-    "local_image": "${FRONTEND_IMAGE}:${APP_VERSION}",
-    "image_id": "${FRONTEND_IMAGE_ID}",
-    "sbom": "frontend-${APP_VERSION}-sbom.json",
-    "grype_report": "frontend-${APP_VERSION}-grype.json"
-  },
-  "signing": {
-    "backend": "cosign",
-    "backend_digest": "${BACKEND_DIGEST}",
-    "frontend": "cosign",
-    "frontend_digest": "${FRONTEND_DIGEST}",
-    "verification": "cosign public-key verification"
-  }
-}
-EOF
-
-                    echo "Traceability metadata created:"
-                    cat "sbom/traceability-${APP_VERSION}.json"
-                '''
-            }
-        }
-
         stage('Push Frontend to OCIR') {
             steps {
                 withCredentials([
@@ -718,6 +645,80 @@ EOF
                         echo "===== Frontend Cosign Verification Completed ====="
                     '''
                 }
+            }
+        }
+
+        stage('Create SBOM Traceability Metadata') {
+            steps {
+                sh '''
+                    set -e
+
+                    echo "========================================"
+                    echo "SBOM Traceability Metadata"
+                    echo "========================================"
+                    echo "Creating traceability after both images are pushed and Cosign-verified."
+
+                    BACKEND_IMAGE_ID=$(docker image inspect \
+                        --format='{{.Id}}' \
+                        ${APP_IMAGE}:${APP_VERSION} 2>/dev/null || true)
+
+                    FRONTEND_IMAGE_ID=$(docker image inspect \
+                        --format='{{.Id}}' \
+                        ${FRONTEND_IMAGE}:${APP_VERSION} 2>/dev/null || true)
+
+                    BUILD_TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+                    BACKEND_DIGEST=$(docker image inspect                         --format='{{index .RepoDigests 0}}'                         ${OCIR_REPOSITORY}:backend-${APP_VERSION})
+
+                    FRONTEND_DIGEST=$(docker image inspect                         --format='{{index .RepoDigests 0}}'                         ${OCIR_REPOSITORY}:frontend-${APP_VERSION})
+
+                    cat > "sbom/traceability-${APP_VERSION}.json" <<EOF
+{
+  "application": "Auralis Web3 Music Streaming Platform",
+  "jenkins": {
+    "job": "${JOB_NAME}",
+    "build_number": "${BUILD_NUMBER}",
+    "build_url": "${BUILD_URL}"
+  },
+  "source": {
+    "repository": "https://github.com/0x1k4rt1k/auralis-web3-music.git",
+    "branch": "main",
+    "commit_sha": "${GIT_COMMIT_SHA}",
+    "commit_short_sha": "${GIT_COMMIT_SHORT}"
+  },
+  "build": {
+    "timestamp": "${BUILD_TIMESTAMP}",
+    "syft_version": "${SYFT_VERSION}",
+    "grype_image": "${GRYPE_IMAGE}",
+    "cosign_image": "${COSIGN_IMAGE}"
+  },
+  "backend": {
+    "image": "${OCIR_REPOSITORY}:backend-${APP_VERSION}",
+    "local_image": "${APP_IMAGE}:${APP_VERSION}",
+    "image_id": "${BACKEND_IMAGE_ID}",
+    "sbom": "backend-${APP_VERSION}-sbom.json",
+    "grype_report": "backend-${APP_VERSION}-grype.json"
+  },
+  "frontend": {
+    "image": "${OCIR_REPOSITORY}:frontend-${APP_VERSION}",
+    "local_image": "${FRONTEND_IMAGE}:${APP_VERSION}",
+    "image_id": "${FRONTEND_IMAGE_ID}",
+    "sbom": "frontend-${APP_VERSION}-sbom.json",
+    "grype_report": "frontend-${APP_VERSION}-grype.json"
+  },
+  "signing": {
+    "backend": "cosign",
+    "backend_digest": "${BACKEND_DIGEST}",
+    "frontend": "cosign",
+    "frontend_digest": "${FRONTEND_DIGEST}",
+    "verification": "cosign public-key verification"
+  }
+}
+EOF
+
+                    echo "Traceability metadata created:"
+                    cat "sbom/traceability-${APP_VERSION}.json"
+                '''
             }
         }
 
