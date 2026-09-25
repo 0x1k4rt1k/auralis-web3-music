@@ -410,7 +410,7 @@ pipeline {
         stage('Cosign Sign Backend') {
             steps {
                 withCredentials([
-                    file(credentialsId: 'cosign-private-key', variable: 'COSIGN_KEY'),
+                    file(credentialsId: 'cosign-private-key', variable: 'COSIGN_KEY_FILE'),
                     string(credentialsId: 'cosign-key-password', variable: 'COSIGN_PASSWORD'),
                     usernamePassword(
                         credentialsId: 'ocir-credentials',
@@ -437,14 +437,16 @@ pipeline {
                         echo "Backend image digest:"
                         echo "${BACKEND_DIGEST}"
 
+                        export COSIGN_PRIVATE_KEY="$(cat "${COSIGN_KEY_FILE}")"
+
                         docker run --rm \
                             --user 0:0 \
-                            -v "${COSIGN_KEY}:/cosign.key:ro" \
-                            -w / \
+                            -e COSIGN_PRIVATE_KEY \
                             -e COSIGN_PASSWORD \
                             ${COSIGN_IMAGE} \
                             sign \
-                            --key /cosign.key \
+                            --yes \
+                            --key env://COSIGN_PRIVATE_KEY \
                             --registry-username "${OCIR_USERNAME}" \
                             --registry-password "${OCIR_TOKEN}" \
                             "${BACKEND_DIGEST}"
@@ -458,7 +460,7 @@ pipeline {
         stage('Cosign Verify Backend') {
             steps {
                 withCredentials([
-                    file(credentialsId: 'cosign-public-key', variable: 'COSIGN_PUBLIC_KEY'),
+                    file(credentialsId: 'cosign-public-key', variable: 'COSIGN_PUBLIC_KEY_FILE'),
                     usernamePassword(
                         credentialsId: 'ocir-credentials',
                         usernameVariable: 'OCIR_USERNAME',
@@ -484,12 +486,14 @@ pipeline {
                         echo "Verifying backend:"
                         echo "${BACKEND_DIGEST}"
 
+                        export COSIGN_PUBLIC_KEY="$(cat "${COSIGN_PUBLIC_KEY_FILE}")"
+
                         docker run --rm \
                             --user 0:0 \
-                            -v "${COSIGN_PUBLIC_KEY}:/cosign.pub:ro" \
+                            -e COSIGN_PUBLIC_KEY \
                             ${COSIGN_IMAGE} \
                             verify \
-                            --key /cosign.pub \
+                            --key env://COSIGN_PUBLIC_KEY \
                             --registry-username "${OCIR_USERNAME}" \
                             --registry-password "${OCIR_TOKEN}" \
                             "${BACKEND_DIGEST}"
@@ -497,154 +501,6 @@ pipeline {
                         echo "===== Backend Cosign Verification Completed ====="
                     '''
                 }
-            }
-        }
-
-        stage('Frontend Docker Build') {
-            steps {
-                sh '''
-                    echo "===== Frontend Docker Build ====="
-
-                    docker build \
-                        -t ${FRONTEND_IMAGE}:${APP_VERSION} \
-                        -t ${FRONTEND_IMAGE}:latest \
-                        ./frontend
-                '''
-            }
-        }
-
-        stage('Frontend Docker Image Check') {
-            steps {
-                sh '''
-                    echo "===== Frontend Docker Image Check ====="
-
-                    docker images ${FRONTEND_IMAGE}
-
-                    echo "Frontend Image ID:"
-                    docker image inspect \
-                        --format='{{.Id}}' \
-                        ${FRONTEND_IMAGE}:${APP_VERSION}
-                '''
-            }
-        }
-
-        stage('Frontend Trivy Scan') {
-            steps {
-                sh '''
-                    echo "===== Frontend Trivy Security Scan ====="
-
-                    docker run --rm \
-                        -v /var/run/docker.sock:/var/run/docker.sock \
-                        aquasec/trivy:latest \
-                        image \
-                        --severity HIGH,CRITICAL \
-                        --exit-code 0 \
-                        ${FRONTEND_IMAGE}:${APP_VERSION}
-                '''
-            }
-        }
-
-        stage('Frontend SBOM + Grype') {
-            steps {
-                sh '''
-                    set -e
-
-                    echo "========================================"
-                    echo "Frontend SBOM Generation"
-                    echo "========================================"
-
-                    SBOM_VOLUME="auralis-sbom-frontend-${BUILD_NUMBER}"
-                    SBOM_FILE="frontend-${APP_VERSION}-sbom.json"
-                    GRYPE_FILE="frontend-${APP_VERSION}-grype.json"
-                    SBOM_CONTAINER="auralis-sbom-extract-frontend-${BUILD_NUMBER}"
-
-                    docker rm -f "${SBOM_CONTAINER}" >/dev/null 2>&1 || true
-                    docker volume rm "${SBOM_VOLUME}" >/dev/null 2>&1 || true
-                    docker volume create "${SBOM_VOLUME}" >/dev/null
-
-                    docker image inspect \
-                        "${FRONTEND_IMAGE}:${APP_VERSION}" >/dev/null
-
-                    echo "Running Syft ${SYFT_VERSION}..."
-
-                    docker run --rm \
-                        -v /var/run/docker.sock:/var/run/docker.sock \
-                        -v "${SBOM_VOLUME}:/work" \
-                        ghcr.io/anchore/syft:${SYFT_VERSION} \
-                        "docker:${FRONTEND_IMAGE}:${APP_VERSION}" \
-                        -o "cyclonedx-json=/work/${SBOM_FILE}"
-
-                    echo "Validating SBOM..."
-
-                    docker run --rm \
-                        -v "${SBOM_VOLUME}:/work:ro" \
-                        alpine:latest \
-                        sh -c "test -s /work/${SBOM_FILE} && ls -lh /work/${SBOM_FILE}"
-
-                    echo "========================================"
-                    echo "Frontend Grype Vulnerability Scan"
-                    echo "========================================"
-
-                    docker run --rm \
-                        -v "${SBOM_VOLUME}:/work:rw" \
-                        ${GRYPE_IMAGE} \
-                        "sbom:/work/${SBOM_FILE}" \
-                        -o json \
-                        --file "/work/${GRYPE_FILE}"
-
-                    echo "Grype report generated."
-
-                    docker run --rm \
-                        -v "${SBOM_VOLUME}:/work:ro" \
-                        alpine:latest \
-                        sh -c "test -s /work/${GRYPE_FILE} && ls -lh /work/${GRYPE_FILE}"
-
-                    echo ""
-                    echo "===== Frontend Grype Results ====="
-
-                    docker run --rm \
-                        -v "${SBOM_VOLUME}:/work:ro" \
-                        ${GRYPE_IMAGE} \
-                        "sbom:/work/${SBOM_FILE}"
-
-                    echo "Creating extraction container..."
-
-                    docker create \
-                        --name "${SBOM_CONTAINER}" \
-                        -v "${SBOM_VOLUME}:/work:ro" \
-                        alpine:latest \
-                        sh -c "sleep 300" >/dev/null
-
-                    docker cp \
-                        "${SBOM_CONTAINER}:/work/${SBOM_FILE}" \
-                        "${WORKSPACE}/sbom/${SBOM_FILE}"
-
-                    docker cp \
-                        "${SBOM_CONTAINER}:/work/${GRYPE_FILE}" \
-                        "${WORKSPACE}/sbom/${GRYPE_FILE}"
-
-                    docker rm -f "${SBOM_CONTAINER}" >/dev/null
-
-                    if [ ! -s "${WORKSPACE}/sbom/${SBOM_FILE}" ]; then
-                        echo "ERROR: Frontend SBOM was not copied."
-                        exit 1
-                    fi
-
-                    if [ ! -s "${WORKSPACE}/sbom/${GRYPE_FILE}" ]; then
-                        echo "ERROR: Frontend Grype report was not copied."
-                        exit 1
-                    fi
-
-                    echo "Frontend SBOM:"
-                    ls -lh "${WORKSPACE}/sbom/${SBOM_FILE}"
-
-                    echo "Frontend Grype report:"
-                    ls -lh "${WORKSPACE}/sbom/${GRYPE_FILE}"
-
-                    docker volume rm "${SBOM_VOLUME}" >/dev/null
-
-                    echo "===== Frontend SBOM + Grype Completed ====="
-                '''
             }
         }
 
@@ -771,7 +627,7 @@ EOF
         stage('Cosign Sign Frontend') {
             steps {
                 withCredentials([
-                    file(credentialsId: 'cosign-private-key', variable: 'COSIGN_KEY'),
+                    file(credentialsId: 'cosign-private-key', variable: 'COSIGN_KEY_FILE'),
                     string(credentialsId: 'cosign-key-password', variable: 'COSIGN_PASSWORD'),
                     usernamePassword(
                         credentialsId: 'ocir-credentials',
@@ -798,14 +654,16 @@ EOF
                         echo "Frontend image digest:"
                         echo "${FRONTEND_DIGEST}"
 
+                        export COSIGN_PRIVATE_KEY="$(cat "${COSIGN_KEY_FILE}")"
+
                         docker run --rm \
                             --user 0:0 \
-                            -v "${COSIGN_KEY}:/cosign.key:ro" \
-                            -w / \
+                            -e COSIGN_PRIVATE_KEY \
                             -e COSIGN_PASSWORD \
                             ${COSIGN_IMAGE} \
                             sign \
-                            --key /cosign.key \
+                            --yes \
+                            --key env://COSIGN_PRIVATE_KEY \
                             --registry-username "${OCIR_USERNAME}" \
                             --registry-password "${OCIR_TOKEN}" \
                             "${FRONTEND_DIGEST}"
@@ -819,7 +677,7 @@ EOF
         stage('Cosign Verify Frontend') {
             steps {
                 withCredentials([
-                    file(credentialsId: 'cosign-public-key', variable: 'COSIGN_PUBLIC_KEY'),
+                    file(credentialsId: 'cosign-public-key', variable: 'COSIGN_PUBLIC_KEY_FILE'),
                     usernamePassword(
                         credentialsId: 'ocir-credentials',
                         usernameVariable: 'OCIR_USERNAME',
@@ -845,12 +703,14 @@ EOF
                         echo "Verifying frontend:"
                         echo "${FRONTEND_DIGEST}"
 
+                        export COSIGN_PUBLIC_KEY="$(cat "${COSIGN_PUBLIC_KEY_FILE}")"
+
                         docker run --rm \
                             --user 0:0 \
-                            -v "${COSIGN_PUBLIC_KEY}:/cosign.pub:ro" \
+                            -e COSIGN_PUBLIC_KEY \
                             ${COSIGN_IMAGE} \
                             verify \
-                            --key /cosign.pub \
+                            --key env://COSIGN_PUBLIC_KEY \
                             --registry-username "${OCIR_USERNAME}" \
                             --registry-password "${OCIR_TOKEN}" \
                             "${FRONTEND_DIGEST}"
