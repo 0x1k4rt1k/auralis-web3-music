@@ -17,7 +17,7 @@ spec:
         - name: ocir-pull-secret
       containers:
         - name: frontend
-          image: hyd.ocir.io/axedsxii3ulu/auralis:frontend-37
+          image: hyd.ocir.io/axedsxii3ulu/auralis:frontend-41
           imagePullPolicy: Always
           ports:
             - containerPort: 8080
