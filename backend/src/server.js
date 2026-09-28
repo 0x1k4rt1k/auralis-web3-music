@@ -1,6 +1,7 @@
 import express from "express";
 import pg from "pg";
 import client from "prom-client";
+import { sdk } from "@audius/sdk";
 
 const { Pool } = pg;
 const app = express();
@@ -13,6 +14,11 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   max: 10,
   idleTimeoutMillis: 30000
+});
+
+const audiusSdk = sdk({
+  apiKey: process.env.AUDIUS_API_KEY,
+  bearerToken: process.env.AUDIUS_BEARER_TOKEN
 });
 
 client.collectDefaultMetrics();
@@ -31,23 +37,36 @@ app.use((req, res, next) => {
       status: String(res.statusCode)
     });
   });
+
   next();
 });
 
 app.get("/api/health", async (_req, res) => {
   try {
     await pool.query("SELECT 1");
-    res.json({ status: "ok", database: "ok", service: "auralis-api" });
+
+    res.json({
+      status: "ok",
+      database: "ok",
+      service: "auralis-api",
+      audius: "configured"
+    });
   } catch {
-    res.status(503).json({ status: "degraded", database: "unavailable" });
+    res.status(503).json({
+      status: "degraded",
+      database: "unavailable"
+    });
   }
 });
 
 app.get("/api/overview", async (_req, res) => {
   const [tracks, artists] = await Promise.all([
-    pool.query("SELECT COUNT(*)::int AS count, COALESCE(SUM(plays),0)::bigint AS plays FROM tracks"),
+    pool.query(
+      "SELECT COUNT(*)::int AS count, COALESCE(SUM(plays),0)::bigint AS plays FROM tracks"
+    ),
     pool.query("SELECT COUNT(*)::int AS count FROM artists")
   ]);
+
   res.json({
     tracks: tracks.rows[0].count,
     streams: Number(tracks.rows[0].plays),
@@ -57,46 +76,143 @@ app.get("/api/overview", async (_req, res) => {
 });
 
 app.get("/api/tracks", async (_req, res) => {
-  const result = await pool.query(`
-    SELECT t.id, t.title, t.genre, t.duration_seconds, t.cover_url,
-           t.audio_url, t.plays, t.owned_token_id,
-           a.name AS artist, a.verified
-    FROM tracks t
-    JOIN artists a ON a.id=t.artist_id
-    ORDER BY t.plays DESC, t.id
-  `);
-  res.json(result.rows);
+  try {
+    const result = await pool.query(`
+      SELECT
+        t.id,
+        t.title,
+        t.genre,
+        t.duration_seconds,
+        t.cover_url,
+        t.audio_url,
+        t.audius_track_id,
+        t.plays,
+        t.owned_token_id,
+        a.name AS artist,
+        a.verified
+      FROM tracks t
+      JOIN artists a ON a.id=t.artist_id
+      ORDER BY t.plays DESC, t.id
+    `);
+
+    res.json(
+      result.rows.map((track) => ({
+        ...track,
+        audio_url: track.audius_track_id
+          ? `/api/tracks/${track.id}/stream`
+          : track.audio_url
+      }))
+    );
+  } catch (error) {
+    console.error("Failed to fetch tracks:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
 });
 
 app.get("/api/artists", async (_req, res) => {
   const result = await pool.query(`
-    SELECT a.id, a.name, a.genre, a.verified, a.wallet_address,
-           COUNT(t.id)::int AS tracks,
-           COALESCE(SUM(t.plays),0)::bigint AS streams
+    SELECT
+      a.id,
+      a.name,
+      a.genre,
+      a.verified,
+      a.wallet_address,
+      COUNT(t.id)::int AS tracks,
+      COALESCE(SUM(t.plays),0)::bigint AS streams
     FROM artists a
     LEFT JOIN tracks t ON t.artist_id=a.id
     GROUP BY a.id
     ORDER BY streams DESC
   `);
+
   res.json(result.rows);
 });
 
 app.get("/api/playlists", async (_req, res) => {
-  const result = await pool.query("SELECT id,name,description,cover_url FROM playlists ORDER BY id");
+  const result = await pool.query(
+    "SELECT id,name,description,cover_url FROM playlists ORDER BY id"
+  );
+
   res.json(result.rows);
 });
 
 app.post("/api/tracks/:id/play", async (req, res) => {
   const id = Number(req.params.id);
-  if (!Number.isInteger(id) || id < 1) return res.status(400).json({ error: "Invalid track ID" });
+
+  if (!Number.isInteger(id) || id < 1) {
+    return res.status(400).json({
+      error: "Invalid track ID"
+    });
+  }
 
   const result = await pool.query(
     "UPDATE tracks SET plays=plays+1 WHERE id=$1 RETURNING id, plays",
     [id]
   );
 
-  if (!result.rowCount) return res.status(404).json({ error: "Track not found" });
+  if (!result.rowCount) {
+    return res.status(404).json({
+      error: "Track not found"
+    });
+  }
+
   res.json(result.rows[0]);
+});
+
+app.get("/api/tracks/:id/stream", async (req, res) => {
+  const id = Number(req.params.id);
+
+  if (!Number.isInteger(id) || id < 1) {
+    return res.status(400).json({
+      error: "Invalid track ID"
+    });
+  }
+
+  try {
+    const result = await pool.query(
+      `
+      SELECT audius_track_id
+      FROM tracks
+      WHERE id=$1
+      `,
+      [id]
+    );
+
+    if (!result.rowCount) {
+      return res.status(404).json({
+        error: "Track not found"
+      });
+    }
+
+    const audiusTrackId = result.rows[0].audius_track_id;
+
+    if (!audiusTrackId) {
+      return res.status(404).json({
+        error: "Audius track is not configured"
+      });
+    }
+
+    const { data: track } = await audiusSdk.tracks.getTrack({
+      trackId: audiusTrackId
+    });
+
+    if (!track || !track.isStreamable) {
+      return res.status(404).json({
+        error: "Track is not streamable"
+      });
+    }
+
+    const streamUrl =
+      `https://api.audius.co/v1/tracks/${encodeURIComponent(audiusTrackId)}/stream`;
+
+    return res.redirect(302, streamUrl);
+  } catch (error) {
+    console.error("Audius stream error:", error);
+
+    return res.status(502).json({
+      error: "Unable to retrieve Audius stream"
+    });
+  }
 });
 
 app.get("/metrics", async (_req, res) => {
@@ -104,13 +220,22 @@ app.get("/metrics", async (_req, res) => {
   res.end(await client.register.metrics());
 });
 
-app.use((_req, res) => res.status(404).json({ error: "Not found" }));
+app.use((_req, res) => {
+  res.status(404).json({
+    error: "Not found"
+  });
+});
 
 app.use((err, _req, res, _next) => {
   console.error(err);
-  res.status(500).json({ error: "Internal server error" });
+
+  res.status(500).json({
+    error: "Internal server error"
+  });
 });
 
-app.listen(port, "0.0.0.0", () => console.log(`Auralis API listening on ${port}`));
+app.listen(port, "0.0.0.0", () => {
+  console.log(`Auralis API listening on ${port}`);
+});
 
 export { app };

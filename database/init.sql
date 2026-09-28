@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS tracks (
   duration_seconds INTEGER NOT NULL CHECK (duration_seconds > 0),
   cover_url TEXT NOT NULL,
   audio_url TEXT NOT NULL,
+  audius_track_id VARCHAR(64),
   plays INTEGER NOT NULL DEFAULT 0,
   owned_token_id VARCHAR(80),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
