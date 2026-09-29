@@ -82,10 +82,29 @@ pipeline {
             }
         }
 
-        stage('Unit Tests') {
+        stage('Unit Tests + Coverage') {
             steps {
                 dir('backend') {
-                    sh 'npm test'
+                    sh '''
+                        set -e
+
+                        echo "===== Unit Tests + Coverage ====="
+
+                        rm -rf coverage
+                        mkdir -p coverage
+
+                        npm test -- \
+                            --experimental-test-coverage \
+                            --test-reporter=spec \
+                            --test-reporter-destination=stdout \
+                            --test-reporter=lcov \
+                            --test-reporter-destination=coverage/lcov.info
+
+                        test -s coverage/lcov.info
+
+                        echo "Coverage report generated:"
+                        ls -lh coverage/lcov.info
+                    '''
                 }
             }
         }
@@ -120,7 +139,8 @@ pipeline {
                                 ${scannerHome}/bin/sonar-scanner --version
 
                                 ${scannerHome}/bin/sonar-scanner \
-                                    -Dsonar.token="\$SONAR_TOKEN"
+                                    -Dsonar.token="\$SONAR_TOKEN" \
+                                    -Dsonar.javascript.lcov.reportPaths=backend/coverage/lcov.info
                             """
                         }
                     }
@@ -145,10 +165,17 @@ pipeline {
                     echo "Gitleaks Secret Scan"
                     echo "========================================"
 
-                    mkdir -p gitleaks-report
+                    REPORT_DIR="${WORKSPACE}/gitleaks-report"
+                    REPORT_FILE="${REPORT_DIR}/gitleaks.json"
+                    CONTAINER_NAME="auralis-gitleaks-${BUILD_NUMBER}"
 
-                    docker run --rm \
-                        -v "$WORKSPACE:/repo" \
+                    mkdir -p "${REPORT_DIR}"
+                    rm -f "${REPORT_FILE}"
+                    docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+
+                    docker create \
+                        --name "${CONTAINER_NAME}" \
+                        -v "${WORKSPACE}:/repo:ro" \
                         ${GITLEAKS_IMAGE} \
                         detect \
                         --source=/repo \
@@ -156,16 +183,23 @@ pipeline {
                         --no-banner \
                         --redact \
                         --report-format json \
-                        --report-path /repo/gitleaks-report/gitleaks.json \
+                        --report-path /tmp/gitleaks.json \
                         --exit-code 1
 
+                    docker start -a "${CONTAINER_NAME}"
                     GITLEAKS_EXIT=$?
+
+                    docker cp \
+                        "${CONTAINER_NAME}:/tmp/gitleaks.json" \
+                        "${REPORT_FILE}" >/dev/null 2>&1 || true
+
+                    docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
 
                     echo "Gitleaks exit code: ${GITLEAKS_EXIT}"
 
-                    if [ -f gitleaks-report/gitleaks.json ]; then
+                    if [ -s "${REPORT_FILE}" ]; then
                         echo "Gitleaks report generated:"
-                        ls -lh gitleaks-report/gitleaks.json
+                        ls -lh "${REPORT_FILE}"
                     else
                         echo "No Gitleaks JSON report was generated."
                     fi
@@ -198,7 +232,9 @@ pipeline {
         stage('Dependency Security Gate') {
             steps {
                 dependencyCheckPublisher(
-                    pattern: 'dependency-check-report/dependency-check-report.xml'
+                    pattern: 'dependency-check-report/dependency-check-report.xml',
+                    failedTotalCritical: 0,
+                    failedTotalHigh: 0
                 )
             }
         }
@@ -437,7 +473,11 @@ pipeline {
                         echo "Backend image digest:"
                         echo "${BACKEND_DIGEST}"
 
-                        export COSIGN_PRIVATE_KEY="$(cat "${COSIGN_KEY_FILE}")"
+                        set +x
+                        COSIGN_PRIVATE_KEY_CONTENT="$(cat "${COSIGN_KEY_FILE}")"
+                        export COSIGN_PRIVATE_KEY="${COSIGN_PRIVATE_KEY_CONTENT}"
+                        unset COSIGN_PRIVATE_KEY_CONTENT
+                        set -x
 
                         docker run --rm \
                             --user 0:0 \
@@ -725,7 +765,11 @@ pipeline {
                         echo "Frontend image digest:"
                         echo "${FRONTEND_DIGEST}"
 
-                        export COSIGN_PRIVATE_KEY="$(cat "${COSIGN_KEY_FILE}")"
+                        set +x
+                        COSIGN_PRIVATE_KEY_CONTENT="$(cat "${COSIGN_KEY_FILE}")"
+                        export COSIGN_PRIVATE_KEY="${COSIGN_PRIVATE_KEY_CONTENT}"
+                        unset COSIGN_PRIVATE_KEY_CONTENT
+                        set -x
 
                         docker run --rm \
                             --user 0:0 \
@@ -936,19 +980,28 @@ EOF
                     echo "OWASP ZAP DAST Baseline Scan"
                     echo "========================================"
                     echo "Target: ${DAST_TARGET}"
+                    echo "========================================"
 
                     ZAP_DIR="${WORKSPACE}/zap-reports"
+
                     rm -rf "${ZAP_DIR}"
                     mkdir -p "${ZAP_DIR}"
 
+                    # The ZAP container must be able to write reports
+                    # into the Jenkins workspace bind mount.
+                    chmod 777 "${ZAP_DIR}"
+
                     echo "Waiting for Auralis application to respond..."
+
                     READY=0
+
                     for i in $(seq 1 30); do
                         if curl -fsS "${DAST_TARGET}/api/health" >/dev/null 2>&1; then
                             echo "Auralis application is responding."
                             READY=1
                             break
                         fi
+
                         echo "Application not ready yet. Attempt ${i}/30"
                         sleep 10
                     done
@@ -959,23 +1012,25 @@ EOF
                     fi
 
                     echo "Pulling OWASP ZAP image..."
+
                     docker pull "${ZAP_IMAGE}"
 
                     echo "Starting OWASP ZAP baseline scan..."
 
-                    docker run --rm \
-                        -v "${ZAP_DIR}:/zap/wrk:rw" \
-                        "${ZAP_IMAGE}" \
-                        zap-baseline.py \
-                        -t "${DAST_TARGET}" \
-                        -r auralis-zap-report.html \
-                        -J auralis-zap-report.json \
-                        -I
+                    docker run --rm                         --user 0:0                         -v "${ZAP_DIR}:/zap/wrk:rw"                         "${ZAP_IMAGE}"                         zap-baseline.py                         -t "${DAST_TARGET}"                         -r auralis-zap-report.html                         -J auralis-zap-report.json                         -I
 
                     echo "========================================"
                     echo "OWASP ZAP Scan Completed"
                     echo "========================================"
-                    ls -lh "${ZAP_DIR}"
+
+                    echo "Generated ZAP reports:"
+                    ls -lah "${ZAP_DIR}"
+
+                    test -s "${ZAP_DIR}/auralis-zap-report.html"
+                    test -s "${ZAP_DIR}/auralis-zap-report.json"
+
+                    echo "ZAP HTML report generated successfully."
+                    echo "ZAP JSON report generated successfully."
                 '''
             }
         }
@@ -992,6 +1047,12 @@ EOF
 
             archiveArtifacts(
                 artifacts: 'gitleaks-report/*.json',
+                allowEmptyArchive: true,
+                fingerprint: true
+            )
+
+            archiveArtifacts(
+                artifacts: 'backend/coverage/lcov.info',
                 allowEmptyArchive: true,
                 fingerprint: true
             )
