@@ -21,7 +21,7 @@ await new Promise((resolve) => {
 const baseUrl =
 `http://127.0.0.1:${server.address().port}`;
 
-let queryHandler = async () => ({
+let queryHandler = async (..._args) => ({
   rows: [],
   rowCount: 0
 });
