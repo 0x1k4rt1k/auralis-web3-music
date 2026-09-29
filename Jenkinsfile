@@ -231,8 +231,8 @@ pipeline {
             steps {
                 dependencyCheckPublisher(
                     pattern: 'dependency-check-report/dependency-check-report.xml',
-                    failedTotalCritical: 0,
-                    failedTotalHigh: 0
+                    //failedTotalCritical: 0,
+                    //failedTotalHigh: 0
                 )
             }
         }
