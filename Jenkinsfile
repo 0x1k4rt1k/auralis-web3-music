@@ -80,34 +80,32 @@ pipeline {
             }
         }
 
-        stage('Unit Tests + Coverage') {
+        stage('Unit Tests') {
             steps {
-                sh '''
-                    set -e
+                dir('backend') {
+                    sh '''
+                        set -e
 
-                    echo "========================================"
-                    echo "Unit Tests + LCOV Coverage"
-                    echo "========================================"
+                        echo "===== Unit Tests + Coverage ====="
 
-                    rm -rf coverage
-                    mkdir -p coverage
+                        rm -rf coverage
+                        mkdir -p coverage
 
-                    node --test \
-                        --experimental-test-coverage \
-                        --test-reporter=spec \
-                        --test-reporter-destination=stdout \
-                        --test-reporter=lcov \
-                        --test-reporter-destination=coverage/lcov.info \
-                        backend/test/*.test.js
+                        npm test -- \
+                            --experimental-test-coverage \
+                            --test-reporter=spec \
+                            --test-reporter=lcov \
+                            --test-reporter-destination=coverage/lcov.info
 
-                    if [ ! -s coverage/lcov.info ]; then
-                        echo "ERROR: LCOV coverage report was not generated."
-                        exit 1
-                    fi
+                        if [ ! -s coverage/lcov.info ]; then
+                            echo "ERROR: LCOV coverage report was not generated."
+                            exit 1
+                        fi
 
-                    echo "===== LCOV Coverage Report ====="
-                    ls -lh coverage/lcov.info
-                '''
+                        echo "LCOV coverage report generated:"
+                        ls -lh coverage/lcov.info
+                    '''
+                }
             }
         }
 
@@ -137,12 +135,12 @@ pipeline {
                                 echo "SonarScanner location:"
                                 echo "${scannerHome}"
 
-                                echo "SonarScanner version:"●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●
+                                echo "SonarScanner version:"
                                 ${scannerHome}/bin/sonar-scanner --version
 
                                 ${scannerHome}/bin/sonar-scanner \
                                     -Dsonar.token="\$SONAR_TOKEN" \
-                                    -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info
+                                    -Dsonar.javascript.lcov.reportPaths=backend/coverage/lcov.info
                             """
                         }
                     }
@@ -169,9 +167,13 @@ pipeline {
 
                     mkdir -p gitleaks-report
 
-                    docker run --rm \
+                    GITLEAKS_CONTAINER="auralis-gitleaks-${BUILD_NUMBER}"
+
+                    docker rm -f "${GITLEAKS_CONTAINER}" >/dev/null 2>&1 || true
+
+                    docker create \
+                        --name "${GITLEAKS_CONTAINER}" \
                         -v "$WORKSPACE:/repo:ro" \
-                        -v "$WORKSPACE/gitleaks-report:/report" \
                         ${GITLEAKS_IMAGE} \
                         detect \
                         --source=/repo \
@@ -179,14 +181,21 @@ pipeline {
                         --no-banner \
                         --redact \
                         --report-format json \
-                        --report-path /report/gitleaks.json \
-                        --exit-code 1
+                        --report-path /tmp/gitleaks.json \
+                        --exit-code 1 >/dev/null
 
+                    docker start -a "${GITLEAKS_CONTAINER}"
                     GITLEAKS_EXIT=$?
 
                     echo "Gitleaks exit code: ${GITLEAKS_EXIT}"
 
-                    if [ -f gitleaks-report/gitleaks.json ]; then
+                    docker cp \
+                        "${GITLEAKS_CONTAINER}:/tmp/gitleaks.json" \
+                        "${WORKSPACE}/gitleaks-report/gitleaks.json" >/dev/null 2>&1 || true
+
+                    docker rm -f "${GITLEAKS_CONTAINER}" >/dev/null 2>&1 || true
+
+                    if [ -s gitleaks-report/gitleaks.json ]; then
                         echo "Gitleaks report generated:"
                         ls -lh gitleaks-report/gitleaks.json
                     else
@@ -364,7 +373,7 @@ pipeline {
 
                     docker rm -f "${SBOM_CONTAINER}" >/dev/null
 
-                    if [ ! -s "${WORKSPACE}/sbom/${SBOM_FILE}" ]; then●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●
+                    if [ ! -s "${WORKSPACE}/sbom/${SBOM_FILE}" ]; then
                         echo "ERROR: Backend SBOM was not copied."
                         exit 1
                     fi
@@ -463,7 +472,9 @@ pipeline {
                         echo "${BACKEND_DIGEST}"
 
                         set +x
-                        export COSIGN_PRIVATE_KEY="$(cat "${COSIGN_KEY_FILE}")"
+                        COSIGN_PRIVATE_KEY_CONTENT="$(cat "${COSIGN_KEY_FILE}")"
+                        export COSIGN_PRIVATE_KEY="${COSIGN_PRIVATE_KEY_CONTENT}"
+                        unset COSIGN_PRIVATE_KEY_CONTENT
                         set -x
 
                         docker run --rm \
@@ -514,7 +525,9 @@ pipeline {
                         echo "${BACKEND_DIGEST}"
 
                         set +x
-                        export COSIGN_PUBLIC_KEY="$(cat "${COSIGN_PUBLIC_KEY_FILE}")"
+                        COSIGN_PUBLIC_KEY_CONTENT="$(cat "${COSIGN_PUBLIC_KEY_FILE}")"
+                        export COSIGN_PUBLIC_KEY="${COSIGN_PUBLIC_KEY_CONTENT}"
+                        unset COSIGN_PUBLIC_KEY_CONTENT
                         set -x
 
                         docker run --rm \
@@ -755,7 +768,9 @@ pipeline {
                         echo "${FRONTEND_DIGEST}"
 
                         set +x
-                        export COSIGN_PRIVATE_KEY="$(cat "${COSIGN_KEY_FILE}")"
+                        COSIGN_PRIVATE_KEY_CONTENT="$(cat "${COSIGN_KEY_FILE}")"
+                        export COSIGN_PRIVATE_KEY="${COSIGN_PRIVATE_KEY_CONTENT}"
+                        unset COSIGN_PRIVATE_KEY_CONTENT
                         set -x
 
                         docker run --rm \
@@ -806,7 +821,9 @@ pipeline {
                         echo "${FRONTEND_DIGEST}"
 
                         set +x
-                        export COSIGN_PUBLIC_KEY="$(cat "${COSIGN_PUBLIC_KEY_FILE}")"
+                        COSIGN_PUBLIC_KEY_CONTENT="$(cat "${COSIGN_PUBLIC_KEY_FILE}")"
+                        export COSIGN_PUBLIC_KEY="${COSIGN_PUBLIC_KEY_CONTENT}"
+                        unset COSIGN_PUBLIC_KEY_CONTENT
                         set -x
 
                         docker run --rm \
@@ -972,6 +989,12 @@ EOF
 
             archiveArtifacts(
                 artifacts: 'gitleaks-report/*.json',
+                allowEmptyArchive: true,
+                fingerprint: true
+            )
+
+            archiveArtifacts(
+                artifacts: 'backend/coverage/lcov.info',
                 allowEmptyArchive: true,
                 fingerprint: true
             )
