@@ -70,37 +70,37 @@ app.get("/api/overview", async (_req, res) => {
   res.json({
     tracks: tracks.rows[0].count,
     streams: Number(tracks.rows[0].plays),
-    artists: artists.rows[0].count,
-    royaltyModel: "artist-first"
+           artists: artists.rows[0].count,
+           royaltyModel: "artist-first"
   });
 });
 
 app.get("/api/tracks", async (_req, res) => {
   try {
     const result = await pool.query(`
-      SELECT
-        t.id,
-        t.title,
-        t.genre,
-        t.duration_seconds,
-        t.cover_url,
-        t.audio_url,
-        t.audius_track_id,
-        t.plays,
-        t.owned_token_id,
-        a.name AS artist,
-        a.verified
-      FROM tracks t
-      JOIN artists a ON a.id=t.artist_id
-      ORDER BY t.plays DESC, t.id
+    SELECT
+    t.id,
+    t.title,
+    t.genre,
+    t.duration_seconds,
+    t.cover_url,
+    t.audio_url,
+    t.audius_track_id,
+    t.plays,
+    t.owned_token_id,
+    a.name AS artist,
+    a.verified
+    FROM tracks t
+    JOIN artists a ON a.id=t.artist_id
+    ORDER BY t.plays DESC, t.id
     `);
 
     res.json(
       result.rows.map((track) => ({
         ...track,
         audio_url: track.audius_track_id
-          ? `/api/tracks/${track.id}/stream`
-          : track.audio_url
+        ? `/api/tracks/${track.id}/stream`
+        : track.audio_url
       }))
     );
   } catch (error) {
@@ -111,19 +111,19 @@ app.get("/api/tracks", async (_req, res) => {
 
 app.get("/api/artists", async (_req, res) => {
   const result = await pool.query(`
-    SELECT
-      a.id,
-      a.name,
-      a.genre,
-      a.verified,
-      a.wallet_address,
-      COUNT(t.id)::int AS tracks,
-      COALESCE(SUM(t.plays),0)::bigint AS streams
-    FROM artists a
-    LEFT JOIN tracks t ON t.artist_id=a.id
-    GROUP BY a.id
-    ORDER BY streams DESC
-  `);
+  SELECT
+  a.id,
+  a.name,
+  a.genre,
+  a.verified,
+  a.wallet_address,
+  COUNT(t.id)::int AS tracks,
+                                  COALESCE(SUM(t.plays),0)::bigint AS streams
+                                  FROM artists a
+                                  LEFT JOIN tracks t ON t.artist_id=a.id
+                                  GROUP BY a.id
+                                  ORDER BY streams DESC
+                                  `);
 
   res.json(result.rows);
 });
@@ -203,7 +203,7 @@ app.get("/api/tracks/:id/stream", async (req, res) => {
     }
 
     const streamUrl =
-      `https://api.audius.co/v1/tracks/${encodeURIComponent(audiusTrackId)}/stream`;
+    `https://api.audius.co/v1/tracks/${encodeURIComponent(audiusTrackId)}/stream`;
 
     return res.redirect(302, streamUrl);
   } catch (error) {
@@ -234,8 +234,14 @@ app.use((err, _req, res, _next) => {
   });
 });
 
-app.listen(port, "0.0.0.0", () => {
-  console.log(`Auralis API listening on ${port}`);
-});
+/*
+ * Do not automatically start the HTTP server during tests.
+ * Jenkins sets NODE_ENV=test when running the test suite.
+ */
+if (process.env.NODE_ENV !== "test") {
+  app.listen(port, "0.0.0.0", () => {
+    console.log(`Auralis API listening on ${port}`);
+  });
+}
 
-export { app };
+export { app, pool, audiusSdk };
