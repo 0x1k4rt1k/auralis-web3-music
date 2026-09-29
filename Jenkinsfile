@@ -85,7 +85,6 @@ pipeline {
                 dir('backend') {
                     sh '''
                         set -e
-
                         echo "===== Unit Tests + Coverage ====="
 
                         rm -rf coverage
@@ -94,15 +93,12 @@ pipeline {
                         npm test -- \
                             --experimental-test-coverage \
                             --test-reporter=spec \
+                            --test-reporter-destination=stdout \
                             --test-reporter=lcov \
                             --test-reporter-destination=coverage/lcov.info
 
-                        if [ ! -s coverage/lcov.info ]; then
-                            echo "ERROR: LCOV coverage report was not generated."
-                            exit 1
-                        fi
-
-                        echo "LCOV coverage report generated:"
+                        test -s coverage/lcov.info
+                        echo "Coverage report generated:"
                         ls -lh coverage/lcov.info
                     '''
                 }
@@ -173,7 +169,7 @@ pipeline {
 
                     docker create \
                         --name "${GITLEAKS_CONTAINER}" \
-                        -v "$WORKSPACE:/repo:ro" \
+                        -v "${WORKSPACE}:/repo:ro" \
                         ${GITLEAKS_IMAGE} \
                         detect \
                         --source=/repo \
@@ -182,7 +178,7 @@ pipeline {
                         --redact \
                         --report-format json \
                         --report-path /tmp/gitleaks.json \
-                        --exit-code 1 >/dev/null
+                        --exit-code 1
 
                     docker start -a "${GITLEAKS_CONTAINER}"
                     GITLEAKS_EXIT=$?
@@ -191,11 +187,12 @@ pipeline {
 
                     docker cp \
                         "${GITLEAKS_CONTAINER}:/tmp/gitleaks.json" \
-                        "${WORKSPACE}/gitleaks-report/gitleaks.json" >/dev/null 2>&1 || true
+                        "${WORKSPACE}/gitleaks-report/gitleaks.json" \
+                        >/dev/null 2>&1 || true
 
                     docker rm -f "${GITLEAKS_CONTAINER}" >/dev/null 2>&1 || true
 
-                    if [ -s gitleaks-report/gitleaks.json ]; then
+                    if [ -f gitleaks-report/gitleaks.json ]; then
                         echo "Gitleaks report generated:"
                         ls -lh gitleaks-report/gitleaks.json
                     else
@@ -994,13 +991,13 @@ EOF
             )
 
             archiveArtifacts(
-                artifacts: 'backend/coverage/lcov.info',
+                artifacts: 'sbom/*.json',
                 allowEmptyArchive: true,
                 fingerprint: true
             )
 
             archiveArtifacts(
-                artifacts: 'sbom/*.json',
+                artifacts: 'backend/coverage/lcov.info',
                 allowEmptyArchive: true,
                 fingerprint: true
             )
