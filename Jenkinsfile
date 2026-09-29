@@ -80,11 +80,34 @@ pipeline {
             }
         }
 
-        stage('Unit Tests') {
+        stage('Unit Tests + Coverage') {
             steps {
-                dir('backend') {
-                    sh 'npm test'
-                }
+                sh '''
+                    set -e
+
+                    echo "========================================"
+                    echo "Unit Tests + LCOV Coverage"
+                    echo "========================================"
+
+                    rm -rf coverage
+                    mkdir -p coverage
+
+                    node --test \
+                        --experimental-test-coverage \
+                        --test-reporter=spec \
+                        --test-reporter-destination=stdout \
+                        --test-reporter=lcov \
+                        --test-reporter-destination=coverage/lcov.info \
+                        backend/test/*.test.js
+
+                    if [ ! -s coverage/lcov.info ]; then
+                        echo "ERROR: LCOV coverage report was not generated."
+                        exit 1
+                    fi
+
+                    echo "===== LCOV Coverage Report ====="
+                    ls -lh coverage/lcov.info
+                '''
             }
         }
 
@@ -114,11 +137,12 @@ pipeline {
                                 echo "SonarScanner location:"
                                 echo "${scannerHome}"
 
-                                echo "SonarScanner version:"
+                                echo "SonarScanner version:"●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●
                                 ${scannerHome}/bin/sonar-scanner --version
 
                                 ${scannerHome}/bin/sonar-scanner \
-                                    -Dsonar.token="\$SONAR_TOKEN"
+                                    -Dsonar.token="\$SONAR_TOKEN" \
+                                    -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info
                             """
                         }
                     }
@@ -146,7 +170,8 @@ pipeline {
                     mkdir -p gitleaks-report
 
                     docker run --rm \
-                        -v "$WORKSPACE:/repo" \
+                        -v "$WORKSPACE:/repo:ro" \
+                        -v "$WORKSPACE/gitleaks-report:/report" \
                         ${GITLEAKS_IMAGE} \
                         detect \
                         --source=/repo \
@@ -154,7 +179,7 @@ pipeline {
                         --no-banner \
                         --redact \
                         --report-format json \
-                        --report-path /repo/gitleaks-report/gitleaks.json \
+                        --report-path /report/gitleaks.json \
                         --exit-code 1
 
                     GITLEAKS_EXIT=$?
@@ -339,7 +364,7 @@ pipeline {
 
                     docker rm -f "${SBOM_CONTAINER}" >/dev/null
 
-                    if [ ! -s "${WORKSPACE}/sbom/${SBOM_FILE}" ]; then
+                    if [ ! -s "${WORKSPACE}/sbom/${SBOM_FILE}" ]; then●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●
                         echo "ERROR: Backend SBOM was not copied."
                         exit 1
                     fi
@@ -437,7 +462,9 @@ pipeline {
                         echo "Backend image digest:"
                         echo "${BACKEND_DIGEST}"
 
+                        set +x
                         export COSIGN_PRIVATE_KEY="$(cat "${COSIGN_KEY_FILE}")"
+                        set -x
 
                         docker run --rm \
                             --user 0:0 \
@@ -486,7 +513,9 @@ pipeline {
                         echo "Verifying backend:"
                         echo "${BACKEND_DIGEST}"
 
+                        set +x
                         export COSIGN_PUBLIC_KEY="$(cat "${COSIGN_PUBLIC_KEY_FILE}")"
+                        set -x
 
                         docker run --rm \
                             --user 0:0 \
@@ -725,7 +754,9 @@ pipeline {
                         echo "Frontend image digest:"
                         echo "${FRONTEND_DIGEST}"
 
+                        set +x
                         export COSIGN_PRIVATE_KEY="$(cat "${COSIGN_KEY_FILE}")"
+                        set -x
 
                         docker run --rm \
                             --user 0:0 \
@@ -774,7 +805,9 @@ pipeline {
                         echo "Verifying frontend:"
                         echo "${FRONTEND_DIGEST}"
 
+                        set +x
                         export COSIGN_PUBLIC_KEY="$(cat "${COSIGN_PUBLIC_KEY_FILE}")"
+                        set -x
 
                         docker run --rm \
                             --user 0:0 \
