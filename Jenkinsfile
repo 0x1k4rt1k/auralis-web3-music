@@ -80,11 +80,12 @@ pipeline {
             }
         }
 
-        stage('Unit Tests') {
+        stage('Unit Tests + Coverage') {
             steps {
                 dir('backend') {
                     sh '''
                         set -e
+
                         echo "===== Unit Tests + Coverage ====="
 
                         rm -rf coverage
@@ -98,6 +99,7 @@ pipeline {
                             --test-reporter-destination=coverage/lcov.info
 
                         test -s coverage/lcov.info
+
                         echo "Coverage report generated:"
                         ls -lh coverage/lcov.info
                     '''
@@ -161,14 +163,16 @@ pipeline {
                     echo "Gitleaks Secret Scan"
                     echo "========================================"
 
-                    mkdir -p gitleaks-report
+                    REPORT_DIR="${WORKSPACE}/gitleaks-report"
+                    REPORT_FILE="${REPORT_DIR}/gitleaks.json"
+                    CONTAINER_NAME="auralis-gitleaks-${BUILD_NUMBER}"
 
-                    GITLEAKS_CONTAINER="auralis-gitleaks-${BUILD_NUMBER}"
-
-                    docker rm -f "${GITLEAKS_CONTAINER}" >/dev/null 2>&1 || true
+                    mkdir -p "${REPORT_DIR}"
+                    rm -f "${REPORT_FILE}"
+                    docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
 
                     docker create \
-                        --name "${GITLEAKS_CONTAINER}" \
+                        --name "${CONTAINER_NAME}" \
                         -v "${WORKSPACE}:/repo:ro" \
                         ${GITLEAKS_IMAGE} \
                         detect \
@@ -180,21 +184,20 @@ pipeline {
                         --report-path /tmp/gitleaks.json \
                         --exit-code 1
 
-                    docker start -a "${GITLEAKS_CONTAINER}"
+                    docker start -a "${CONTAINER_NAME}"
                     GITLEAKS_EXIT=$?
+
+                    docker cp \
+                        "${CONTAINER_NAME}:/tmp/gitleaks.json" \
+                        "${REPORT_FILE}" >/dev/null 2>&1 || true
+
+                    docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
 
                     echo "Gitleaks exit code: ${GITLEAKS_EXIT}"
 
-                    docker cp \
-                        "${GITLEAKS_CONTAINER}:/tmp/gitleaks.json" \
-                        "${WORKSPACE}/gitleaks-report/gitleaks.json" \
-                        >/dev/null 2>&1 || true
-
-                    docker rm -f "${GITLEAKS_CONTAINER}" >/dev/null 2>&1 || true
-
-                    if [ -f gitleaks-report/gitleaks.json ]; then
+                    if [ -s "${REPORT_FILE}" ]; then
                         echo "Gitleaks report generated:"
-                        ls -lh gitleaks-report/gitleaks.json
+                        ls -lh "${REPORT_FILE}"
                     else
                         echo "No Gitleaks JSON report was generated."
                     fi
@@ -521,11 +524,7 @@ pipeline {
                         echo "Verifying backend:"
                         echo "${BACKEND_DIGEST}"
 
-                        set +x
-                        COSIGN_PUBLIC_KEY_CONTENT="$(cat "${COSIGN_PUBLIC_KEY_FILE}")"
-                        export COSIGN_PUBLIC_KEY="${COSIGN_PUBLIC_KEY_CONTENT}"
-                        unset COSIGN_PUBLIC_KEY_CONTENT
-                        set -x
+                        export COSIGN_PUBLIC_KEY="$(cat "${COSIGN_PUBLIC_KEY_FILE}")"
 
                         docker run --rm \
                             --user 0:0 \
@@ -817,11 +816,7 @@ pipeline {
                         echo "Verifying frontend:"
                         echo "${FRONTEND_DIGEST}"
 
-                        set +x
-                        COSIGN_PUBLIC_KEY_CONTENT="$(cat "${COSIGN_PUBLIC_KEY_FILE}")"
-                        export COSIGN_PUBLIC_KEY="${COSIGN_PUBLIC_KEY_CONTENT}"
-                        unset COSIGN_PUBLIC_KEY_CONTENT
-                        set -x
+                        export COSIGN_PUBLIC_KEY="$(cat "${COSIGN_PUBLIC_KEY_FILE}")"
 
                         docker run --rm \
                             --user 0:0 \
@@ -991,13 +986,13 @@ EOF
             )
 
             archiveArtifacts(
-                artifacts: 'sbom/*.json',
+                artifacts: 'backend/coverage/lcov.info',
                 allowEmptyArchive: true,
                 fingerprint: true
             )
 
             archiveArtifacts(
-                artifacts: 'backend/coverage/lcov.info',
+                artifacts: 'sbom/*.json',
                 allowEmptyArchive: true,
                 fingerprint: true
             )
