@@ -32,70 +32,76 @@ async function load() {
   try {
     const [overview, trackData, artists, playlists] = await Promise.all([
       api("/api/overview"),
-      api("/api/tracks"),
-      api("/api/artists"),
-      api("/api/playlists")
+                                                                        api("/api/tracks"),
+                                                                        api("/api/artists"),
+                                                                        api("/api/playlists")
     ]);
 
     tracks = trackData;
 
-    $("#trackCount").textContent =
-      Number(overview.tracks ?? tracks.length).toLocaleString();
+    // FIX: index.html uses #streamCount, not #trackCount
+    $("#streamCount").textContent =
+    Number(overview.streams ?? 0).toLocaleString();
 
     $("#artistCount").textContent =
-      Number(overview.artists ?? artists.length).toLocaleString();
+    Number(overview.artists ?? artists.length).toLocaleString();
 
     $("#tracks").innerHTML = tracks.map((t, i) => `
-      <article class="track-card" data-index="${i}">
-        <div
-          class="cover"
-          style="background-image:url('${escapeHtml(t.cover_url)}')"
-        >
-          ${escapeHtml(t.title.slice(0, 1))}
-        </div>
+    <article class="track-card" data-index="${i}">
+    <div
+    class="cover"
+    style="background-image:url('${escapeHtml(t.cover_url)}')"
+    >
+    ${escapeHtml(t.title.slice(0, 1))}
+    </div>
 
-        <button class="card-play" aria-label="Play ${escapeHtml(t.title)}">
-          ▶
-        </button>
+    <button class="card-play" aria-label="Play ${escapeHtml(t.title)}">
+    ▶
+    </button>
 
-        <div class="track-info">
-          <strong>${escapeHtml(t.title)}</strong>
-          <span>${escapeHtml(t.artist)}</span>
-        </div>
+    <div class="track-info">
+    <strong>${escapeHtml(t.title)}</strong>
+    <span>${escapeHtml(t.artist)}</span>
+    </div>
 
-        <div class="track-bottom">
-          <span>${escapeHtml(t.genre)}</span>
-          <span>${Number(t.plays).toLocaleString()} plays</span>
-        </div>
-      </article>
+    <div class="track-bottom">
+    <span>${escapeHtml(t.genre)}</span>
+    <span>${Number(t.plays).toLocaleString()} plays</span>
+    </div>
+    </article>
     `).join("");
 
-    $("#artists").innerHTML = artists.map((a, i) => `
-      <article class="artist-card">
-        <div class="avatar avatar-${i % 4}">
-          ${escapeHtml(a.name.slice(0, 1))}
-        </div>
-        <div>
-          <strong>
-            ${escapeHtml(a.name)} ${a.verified ? "✓" : ""}
-          </strong>
-          <span>
-            ${escapeHtml(a.genre)} · ${a.tracks} releases
-          </span>
-        </div>
-        <b>${Number(a.streams).toLocaleString()} streams</b>
-      </article>
+    // FIX: index.html uses #artistGrid, not #artists
+    $("#artistGrid").innerHTML = artists.map((a, i) => `
+    <article class="artist-card">
+    <div class="avatar avatar-${i % 4}">
+    ${escapeHtml(a.name.slice(0, 1))}
+    </div>
+
+    <div>
+    <strong>
+    ${escapeHtml(a.name)} ${a.verified ? "✓" : ""}
+    </strong>
+
+    <span>
+    ${escapeHtml(a.genre)} · ${a.tracks} releases
+    </span>
+    </div>
+
+    <b>${Number(a.streams).toLocaleString()} streams</b>
+    </article>
     `).join("");
 
     $("#playlists").innerHTML = playlists.map((p) => `
-      <article class="playlist">
-        <div
-          class="playlist-art"
-          style="background-image:url('${escapeHtml(p.cover_url)}')"
-        ></div>
-        <strong>${escapeHtml(p.name)}</strong>
-        <span>${escapeHtml(p.description)}</span>
-      </article>
+    <article class="playlist">
+    <div
+    class="playlist-art"
+    style="background-image:url('${escapeHtml(p.cover_url)}')"
+    ></div>
+
+    <strong>${escapeHtml(p.name)}</strong>
+    <span>${escapeHtml(p.description)}</span>
+    </article>
     `).join("");
 
     document.querySelectorAll(".track-card").forEach((card) => {
@@ -127,8 +133,10 @@ async function selectTrack(index) {
 
   $("#nowTitle").textContent = t.title;
   $("#nowArtist").textContent = t.artist;
+
   $("#miniCover").style.backgroundImage =
-    `url('${escapeHtml(t.cover_url)}')`;
+  `url('${escapeHtml(t.cover_url)}')`;
+
   $("#miniCover").textContent = "";
 
   playing = true;
@@ -142,6 +150,7 @@ async function selectTrack(index) {
     }).catch(() => {});
 
     toast(`Playing ${t.title}`);
+
   } catch (error) {
     console.error("Audio playback failed:", error);
 
@@ -174,14 +183,15 @@ $("#play").addEventListener("click", () => {
 
   if (audio.paused) {
     audio.play()
-      .then(() => {
-        playing = true;
-        $("#play").textContent = "Ⅱ";
-      })
-      .catch((error) => {
-        console.error("Audio resume failed:", error);
-        toast("Unable to resume playback");
-      });
+    .then(() => {
+      playing = true;
+      $("#play").textContent = "Ⅱ";
+    })
+    .catch((error) => {
+      console.error("Audio resume failed:", error);
+      toast("Unable to resume playback");
+    });
+
   } else {
     audio.pause();
     playing = false;
@@ -214,9 +224,10 @@ audio.addEventListener("timeupdate", () => {
   $("#progressBar").style.width = `${percentage}%`;
 
   const minutes = Math.floor(audio.currentTime / 60);
+
   const seconds = Math.floor(audio.currentTime % 60)
-    .toString()
-    .padStart(2, "0");
+  .toString()
+  .padStart(2, "0");
 
   $("#time").textContent = `${minutes}:${seconds}`;
 });
@@ -234,7 +245,9 @@ $("#progressBar").parentElement.addEventListener("click", (event) => {
   if (!audio.duration || !Number.isFinite(audio.duration)) return;
 
   const rect = event.currentTarget.getBoundingClientRect();
-  const percentage = (event.clientX - rect.left) / rect.width;
+
+  const percentage =
+  (event.clientX - rect.left) / rect.width;
 
   audio.currentTime = percentage * audio.duration;
 });
@@ -259,7 +272,7 @@ if (searchInput) {
     const term = event.target.value.trim().toLowerCase();
 
     const found = tracks.find((t) =>
-      `${t.title} ${t.artist}`.toLowerCase().includes(term)
+    `${t.title} ${t.artist}`.toLowerCase().includes(term)
     );
 
     if (found) {
