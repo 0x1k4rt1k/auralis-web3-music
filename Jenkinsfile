@@ -60,6 +60,10 @@ pipeline {
         stage('Detect Changed Files') {
             steps {
                 script {
+                    echo "========================================"
+                    echo "Detecting Changed Files"
+                    echo "========================================"
+
                     def previousCommit = sh(
                         script: "git rev-parse HEAD^ 2>/dev/null || true",
                         returnStdout: true
@@ -83,71 +87,89 @@ pipeline {
                         echo "========================================"
                         echo "Changed Files"
                         echo "========================================"
-                        echo changedOutput ?: "No changed files detected."
 
-                        // Normalize every path before checking it.
-                        // This avoids regex/whitespace issues in Jenkins/Groovy.
-                        def files = changedOutput
-                            ? changedOutput.readLines()
-                                .collect { it.trim() }
-                                .findAll { it }
-                            : []
-
-                        def backendChanged = false
-                        def frontendChanged = false
-                        def databaseChanged = false
-                        def k8sChanged = false
-                        def securityChanged = false
-                        def jenkinsChanged = false
-
-                        files.each { file ->
-                            if (file.startsWith('backend/')) {
-                                backendChanged = true
+                        if (changedOutput) {
+                            changedOutput.readLines().each { file ->
+                                echo "FILE: [${file.trim()}]"
                             }
-
-                            if (file.startsWith('frontend/')) {
-                                frontendChanged = true
-                            }
-
-                            if (file.startsWith('database/')) {
-                                databaseChanged = true
-                            }
-
-                            if (file.startsWith('k8s/')) {
-                                k8sChanged = true
-                            }
-
-                            if (
-                                file == 'Jenkinsfile' ||
-                                file.startsWith('Jenkinsfile.')
-                            ) {
-                                jenkinsChanged = true
-                            }
-
-                            if (
-                                file == 'sonar-project.properties' ||
-                                file.startsWith('.gitleaks') ||
-                                file.startsWith('.github/') ||
-                                file.contains('Dockerfile') ||
-                                file.startsWith('docker-compose')
-                            ) {
-                                securityChanged = true
-                            }
+                        } else {
+                            echo "No changed files detected."
                         }
 
-                        env.BACKEND_CHANGED = backendChanged.toString()
-                        env.FRONTEND_CHANGED = frontendChanged.toString()
-                        env.DATABASE_CHANGED = databaseChanged.toString()
-                        env.K8S_CHANGED = k8sChanged.toString()
-                        env.SECURITY_CHANGED = securityChanged.toString()
-                        env.JENKINS_CHANGED = jenkinsChanged.toString()
+                        /*
+                         * Use Git pathspec checks instead of Groovy regex/path
+                         * parsing. This makes component detection independent
+                         * of Jenkins/Groovy string matching behavior.
+                         *
+                         * returnStatus == 0 means at least one changed file
+                         * exists under that path.
+                         */
+                        def backendStatus = sh(
+                            script: "git diff --quiet ${previousCommit} HEAD -- backend/",
+                            returnStatus: true
+                        )
 
-                        // Jenkinsfile/security changes intentionally trigger
-                        // the complete security/supply-chain pipeline.
+                        def frontendStatus = sh(
+                            script: "git diff --quiet ${previousCommit} HEAD -- frontend/",
+                            returnStatus: true
+                        )
+
+                        def databaseStatus = sh(
+                            script: "git diff --quiet ${previousCommit} HEAD -- database/",
+                            returnStatus: true
+                        )
+
+                        def k8sStatus = sh(
+                            script: "git diff --quiet ${previousCommit} HEAD -- k8s/",
+                            returnStatus: true
+                        )
+
+                        def jenkinsStatus = sh(
+                            script: "git diff --quiet ${previousCommit} HEAD -- Jenkinsfile 'Jenkinsfile.*'",
+                            returnStatus: true
+                        )
+
+                        def securityStatus = sh(
+                            script: """
+                                git diff --quiet ${previousCommit} HEAD -- \
+                                    sonar-project.properties \
+                                    .gitleaks* \
+                                    .github/ \
+                                    '*Dockerfile*' \
+                                    docker-compose*
+                            """,
+                            returnStatus: true
+                        )
+
+                        /*
+                         * git diff --quiet returns:
+                         *   0 = no matching changes
+                         *   1 = matching changes exist
+                         *
+                         * Any non-zero value is treated as changed.
+                         */
+                        def backendChanged = backendStatus != 0
+                        def frontendChanged = frontendStatus != 0
+                        def databaseChanged = databaseStatus != 0
+                        def k8sChanged = k8sStatus != 0
+                        def jenkinsChanged = jenkinsStatus != 0
+                        def securityChanged = securityStatus != 0
+
+                        env.BACKEND_CHANGED = backendChanged ? 'true' : 'false'
+                        env.FRONTEND_CHANGED = frontendChanged ? 'true' : 'false'
+                        env.DATABASE_CHANGED = databaseChanged ? 'true' : 'false'
+                        env.K8S_CHANGED = k8sChanged ? 'true' : 'false'
+                        env.SECURITY_CHANGED = securityChanged ? 'true' : 'false'
+                        env.JENKINS_CHANGED = jenkinsChanged ? 'true' : 'false'
+
+                        /*
+                         * Jenkinsfile/security changes intentionally trigger
+                         * the complete security/supply-chain pipeline.
+                         */
                         env.FULL_PIPELINE = (
                             jenkinsChanged ||
                             securityChanged
-                        ).toString()
+                        ) ? 'true' : 'false'
 
                         echo "========================================"
                         echo "Change Detection Results"
