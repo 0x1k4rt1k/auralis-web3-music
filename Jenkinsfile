@@ -1438,6 +1438,7 @@ EOF
                 fingerprint: true
             )
         }
+    }
 
         success {
             echo 'Auralis DevSecOps CI/CD pipeline completed successfully.'
