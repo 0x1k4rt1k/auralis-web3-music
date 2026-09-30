@@ -18,6 +18,7 @@ pipeline {
         GITLEAKS_IMAGE = 'zricethezav/gitleaks:latest'
         COSIGN_IMAGE = 'ghcr.io/sigstore/cosign/cosign:latest'
         ZAP_IMAGE = 'ghcr.io/zaproxy/zaproxy:stable'
+        KICS_IMAGE = 'checkmarx/kics:v2.2.0'
         DAST_TARGET = 'http://129.154.36.20'
 
         BACKEND_CHANGED = 'false'
@@ -124,6 +125,71 @@ pipeline {
                         echo "========================================"
                     }
                 }
+            }
+        }
+
+        stage('Kubernetes IaC Security - KICS') {
+            when {
+                expression {
+                    env.FULL_PIPELINE == 'true' ||
+                    env.K8S_CHANGED == 'true'
+                }
+            }
+            steps {
+                sh '''
+                    set +e
+
+                    echo "========================================"
+                    echo "Kubernetes IaC Security - KICS"
+                    echo "========================================"
+
+                    KICS_DIR="${WORKSPACE}/kics-report"
+
+                    rm -rf "${KICS_DIR}"
+                    mkdir -p "${KICS_DIR}"
+                    chmod 777 "${KICS_DIR}"
+
+                    echo "Pulling KICS image: ${KICS_IMAGE}"
+                    docker pull "${KICS_IMAGE}"
+
+                    echo "Scanning Kubernetes manifests under ./k8s"
+
+                    docker run --rm \
+                        --user 0:0 \
+                        -v "${WORKSPACE}/k8s:/k8s:ro" \
+                        -v "${KICS_DIR}:/reports:rw" \
+                        "${KICS_IMAGE}" \
+                        scan \
+                        -p /k8s \
+                        -o /reports \
+                        --report-formats "json,html,sarif" \
+                        --output-name auralis-kics \
+                        --ignore-on-exit results
+
+                    KICS_EXIT=$?
+
+                    echo "KICS exit code: ${KICS_EXIT}"
+
+                    echo "Generated KICS reports:"
+                    ls -lah "${KICS_DIR}"
+
+                    if [ -s "${KICS_DIR}/auralis-kics.json" ]; then
+                        echo "===== KICS JSON Results ====="
+                        cat "${KICS_DIR}/auralis-kics.json"
+                    else
+                        echo "WARNING: KICS JSON report was not generated."
+                    fi
+
+                    if [ "${KICS_EXIT}" -ne 0 ]; then
+                        echo "ERROR: KICS engine execution failed."
+                        exit "${KICS_EXIT}"
+                    fi
+
+                    echo "KICS is currently REPORT-ONLY for security findings."
+                    echo "Security findings will be reviewed before enabling a hard gate."
+
+                    exit 0
+                '''
             }
         }
 
@@ -1436,6 +1502,12 @@ EOF
 
             archiveArtifacts(
                 artifacts: 'zap-reports/*',
+                allowEmptyArchive: true,
+                fingerprint: true
+            )
+
+            archiveArtifacts(
+                artifacts: 'kics-report/*',
                 allowEmptyArchive: true,
                 fingerprint: true
             )
