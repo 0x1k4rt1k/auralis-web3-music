@@ -360,9 +360,7 @@ pipeline {
             }
             steps {
                 dependencyCheckPublisher(
-                    pattern: 'dependency-check-report/dependency-check-report.xml',
-                    //failedTotalCritical: 0,
-                    //failedTotalHigh: 0
+                    pattern: 'dependency-check-report/dependency-check-report.xml'
                 )
             }
         }
@@ -1279,8 +1277,6 @@ EOF
                 '''
             }
         }
-    }
-
 
         stage('DAST - OWASP ZAP API Scan') {
             when {
