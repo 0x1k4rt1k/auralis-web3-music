@@ -21,13 +21,12 @@ pipeline {
         KICS_IMAGE = 'checkmarx/kics:v2.2.0'
         DAST_TARGET = 'http://129.154.36.20'
 
-        BACKEND_CHANGED = 'false'
-        FRONTEND_CHANGED = 'false'
-        DATABASE_CHANGED = 'false'
-        K8S_CHANGED = 'false'
-        SECURITY_CHANGED = 'false'
-        JENKINS_CHANGED = 'false'
-        FULL_PIPELINE = 'false'
+        // NOTE: BACKEND_CHANGED, FRONTEND_CHANGED, DATABASE_CHANGED,
+        // K8S_CHANGED, SECURITY_CHANGED, JENKINS_CHANGED and FULL_PIPELINE
+        // are intentionally NOT declared here. Values declared in this block
+        // override env.X assignments made later in a script block, which
+        // kept the change flags stuck at 'false'. They are set in the
+        // 'Detect Changed Files' stage instead.
     }
 
     stages {
@@ -58,159 +57,160 @@ pipeline {
         }
 
         stage('Detect Changed Files') {
-    steps {
-        script {
-            echo '========================================'
-            echo 'DETECTING CHANGED FILES'
-            echo '========================================'
+            steps {
+                script {
+                    echo '========================================'
+                    echo 'DETECTING CHANGED FILES'
+                    echo '========================================'
 
-            def currentCommit = sh(
-                script: 'git rev-parse HEAD',
-                returnStdout: true
-            ).trim()
+                    def currentCommit = sh(
+                        script: 'git rev-parse HEAD',
+                        returnStdout: true
+                    ).trim()
 
-            // Prefer last successful build's commit, fall back to HEAD^
-            def previousCommit = env.GIT_PREVIOUS_SUCCESSFUL_COMMIT ?: ''
+                    // Prefer last successful build's commit, fall back to HEAD^
+                    def previousCommit = env.GIT_PREVIOUS_SUCCESSFUL_COMMIT ?: ''
 
-            // Make sure that commit actually exists in this checkout
-            // (it can be missing after a force-push or a shallow clone)
-            if (previousCommit) {
-                def exists = sh(
-                    script: "git cat-file -e ${previousCommit}^{commit} 2>/dev/null",
-                    returnStatus: true
-                )
-                if (exists != 0) {
-                    echo "Previous successful commit ${previousCommit} not found in checkout. Falling back to HEAD^."
-                    previousCommit = ''
+                    // Make sure that commit actually exists in this checkout
+                    // (it can be missing after a force-push or a shallow clone)
+                    if (previousCommit) {
+                        def exists = sh(
+                            script: "git cat-file -e ${previousCommit}^{commit} 2>/dev/null",
+                            returnStatus: true
+                        )
+                        if (exists != 0) {
+                            echo "Previous successful commit ${previousCommit} not found in checkout. Falling back to HEAD^."
+                            previousCommit = ''
+                        }
+                    }
+
+                    if (!previousCommit) {
+                        previousCommit = sh(
+                            script: 'git rev-parse HEAD^ 2>/dev/null || true',
+                            returnStdout: true
+                        ).trim()
+                    }
+
+                    echo "Current commit:  ${currentCommit}"
+                    echo "Compared to:     ${previousCommit ?: 'N/A'}"
+
+                    // Debug info (safe to remove once everything works)
+                    sh 'git log --oneline -5'
+                    sh 'git status --short'
+
+                    def changedFiles = ''
+                    def diffOk = false
+
+                    if (previousCommit) {
+                        changedFiles = sh(
+                            script: "git diff --name-only ${previousCommit} ${currentCommit}",
+                            returnStdout: true
+                        ).trim()
+                        diffOk = true
+                    }
+
+                    if (!previousCommit || !diffOk) {
+
+                        echo 'No previous commit available (or diff failed).'
+                        echo 'Running FULL PIPELINE.'
+
+                        env.BACKEND_CHANGED = 'true'
+                        env.FRONTEND_CHANGED = 'true'
+                        env.DATABASE_CHANGED = 'true'
+                        env.K8S_CHANGED = 'true'
+                        env.SECURITY_CHANGED = 'true'
+                        env.JENKINS_CHANGED = 'true'
+                        env.FULL_PIPELINE = 'true'
+
+                    } else {
+
+                        echo '========================================'
+                        echo 'Changed Files'
+                        echo '========================================'
+
+                        echo changedFiles ?: 'No changed files detected.'
+
+                        def files = []
+                        for (String line : changedFiles.split('\n')) {
+                            if (line.trim()) {
+                                files.add(line.trim())
+                            }
+                        }
+
+                        def backendChanged = false
+                        def frontendChanged = false
+                        def databaseChanged = false
+                        def k8sChanged = false
+                        def securityChanged = false
+                        def jenkinsChanged = false
+
+                        for (int i = 0; i < files.size(); i++) {
+
+                            def changedPath = files[i].replace('\\', '/')
+
+                            if (changedPath.startsWith('backend/')) {
+                                backendChanged = true
+                            }
+
+                            if (changedPath.startsWith('frontend/')) {
+                                frontendChanged = true
+                            }
+
+                            if (changedPath.startsWith('database/')) {
+                                databaseChanged = true
+                            }
+
+                            if (changedPath.startsWith('k8s/')) {
+                                k8sChanged = true
+                            }
+
+                            if (
+                                changedPath == 'Jenkinsfile' ||
+                                changedPath.startsWith('Jenkinsfile.')
+                            ) {
+                                jenkinsChanged = true
+                            }
+
+                            if (
+                                changedPath == 'sonar-project.properties' ||
+                                changedPath.startsWith('.gitleaks') ||
+                                changedPath.startsWith('.github/') ||
+                                changedPath.contains('Dockerfile') ||
+                                changedPath.startsWith('docker-compose')
+                            ) {
+                                securityChanged = true
+                            }
+
+                            echo "Checked: ${changedPath} -> backend=${backendChanged}, frontend=${frontendChanged}, jenkins=${jenkinsChanged}"
+                        }
+
+                        env.BACKEND_CHANGED  = backendChanged  ? 'true' : 'false'
+                        env.FRONTEND_CHANGED = frontendChanged ? 'true' : 'false'
+                        env.DATABASE_CHANGED = databaseChanged ? 'true' : 'false'
+                        env.K8S_CHANGED      = k8sChanged      ? 'true' : 'false'
+                        env.SECURITY_CHANGED = securityChanged ? 'true' : 'false'
+                        env.JENKINS_CHANGED  = jenkinsChanged  ? 'true' : 'false'
+
+                        env.FULL_PIPELINE =
+                            (jenkinsChanged || securityChanged) ? 'true' : 'false'
+
+                        echo "DEBUG local frontendChanged=${frontendChanged}, env.FRONTEND_CHANGED=${env.FRONTEND_CHANGED}"
+                    }
+
+                    echo '========================================'
+                    echo 'CHANGE DETECTION RESULTS'
+                    echo '========================================'
+                    echo "Backend changed:  ${env.BACKEND_CHANGED}"
+                    echo "Frontend changed: ${env.FRONTEND_CHANGED}"
+                    echo "Database changed: ${env.DATABASE_CHANGED}"
+                    echo "K8s changed:      ${env.K8S_CHANGED}"
+                    echo "Security changed: ${env.SECURITY_CHANGED}"
+                    echo "Jenkins changed:  ${env.JENKINS_CHANGED}"
+                    echo "Full pipeline:    ${env.FULL_PIPELINE}"
+                    echo '========================================'
                 }
-            }
-
-            if (!previousCommit) {
-                previousCommit = sh(
-                    script: 'git rev-parse HEAD^ 2>/dev/null || true',
-                    returnStdout: true
-                ).trim()
-            }
-
-            echo "Current commit:  ${currentCommit}"
-            echo "Compared to:     ${previousCommit ?: 'N/A'}"
-
-            // Debug info: recent history and working tree state
-            sh 'git log --oneline -5'
-            sh 'git status --short'
-
-            def changedFiles = ''
-            def diffOk = false
-
-            if (previousCommit) {
-                def diffResult = sh(
-                    script: "git diff --name-only ${previousCommit} ${currentCommit}",
-                    returnStdout: true
-                ).trim()
-                changedFiles = diffResult
-                diffOk = true
-            }
-
-            if (!previousCommit || !diffOk) {
-
-                echo 'No previous commit available (or diff failed).'
-                echo 'Running FULL PIPELINE.'
-
-                env.BACKEND_CHANGED = 'true'
-                env.FRONTEND_CHANGED = 'true'
-                env.DATABASE_CHANGED = 'true'
-                env.K8S_CHANGED = 'true'
-                env.SECURITY_CHANGED = 'true'
-                env.JENKINS_CHANGED = 'true'
-                env.FULL_PIPELINE = 'true'
-
-            } else {
-
-                echo '========================================'
-                echo 'Changed Files'
-                echo '========================================'
-
-                echo changedFiles ?: 'No changed files detected.'
-
-                def files = []
-                for (String line : changedFiles.split('\n')) {
-                    if (line.trim()) {
-                        files.add(line.trim())
-                    }
-                }
-
-                def backendChanged = false
-                def frontendChanged = false
-                def databaseChanged = false
-                def k8sChanged = false
-                def securityChanged = false
-                def jenkinsChanged = false
-
-                for (int i = 0; i < files.size(); i++) {
-
-                    def changedPath = files[i].replace('\\', '/')
-
-                    if (changedPath.startsWith('backend/')) {
-                        backendChanged = true
-                    }
-
-                    if (changedPath.startsWith('frontend/')) {
-                        frontendChanged = true
-                    }
-
-                    if (changedPath.startsWith('database/')) {
-                        databaseChanged = true
-                    }
-
-                    if (changedPath.startsWith('k8s/')) {
-                        k8sChanged = true
-                    }
-
-                    if (
-                        changedPath == 'Jenkinsfile' ||
-                        changedPath.startsWith('Jenkinsfile.')
-                    ) {
-                        jenkinsChanged = true
-                    }
-
-                    if (
-                        changedPath == 'sonar-project.properties' ||
-                        changedPath.startsWith('.gitleaks') ||
-                        changedPath.startsWith('.github/') ||
-                        changedPath.contains('Dockerfile') ||
-                        changedPath.startsWith('docker-compose')
-                    ) {
-                        securityChanged = true
-                    }
-
-                    echo "Checked: ${changedPath} -> backend=${backendChanged}, frontend=${frontendChanged}, jenkins=${jenkinsChanged}"
-                }
-
-                env.BACKEND_CHANGED  = backendChanged  ? 'true' : 'false'
-                env.FRONTEND_CHANGED = frontendChanged ? 'true' : 'false'
-                env.DATABASE_CHANGED = databaseChanged ? 'true' : 'false'
-                env.K8S_CHANGED      = k8sChanged      ? 'true' : 'false'
-                env.SECURITY_CHANGED = securityChanged ? 'true' : 'false'
-                env.JENKINS_CHANGED  = jenkinsChanged  ? 'true' : 'false'
-
-                env.FULL_PIPELINE =
-                    (jenkinsChanged || securityChanged) ? 'true' : 'false'
-
-                echo '========================================'
-                echo 'CHANGE DETECTION RESULTS'
-                echo '========================================'
-                echo "Backend changed:  ${env.BACKEND_CHANGED}"
-                echo "Frontend changed: ${env.FRONTEND_CHANGED}"
-                echo "Database changed: ${env.DATABASE_CHANGED}"
-                echo "K8s changed:      ${env.K8S_CHANGED}"
-                echo "Security changed: ${env.SECURITY_CHANGED}"
-                echo "Jenkins changed:  ${env.JENKINS_CHANGED}"
-                echo "Full pipeline:    ${env.FULL_PIPELINE}"
-                echo '========================================'
             }
         }
-    }
-}
 
         stage('Kubernetes IaC Security - KICS') {
             when {
@@ -1313,7 +1313,6 @@ EOF
             }
         }
 
-
         stage('Update GitOps Manifests') {
             when {
                 expression {
@@ -1401,8 +1400,7 @@ EOF
             }
         }
 
-
-stage('DAST - OWASP ZAP Baseline') {
+        stage('DAST - OWASP ZAP Baseline') {
             when {
                 expression {
                     env.FULL_PIPELINE == 'true' ||
@@ -1457,7 +1455,15 @@ stage('DAST - OWASP ZAP Baseline') {
 
                     echo "Starting OWASP ZAP baseline scan..."
 
-                    docker run --rm                         --user 0:0                         -v "${ZAP_DIR}:/zap/wrk:rw"                         "${ZAP_IMAGE}"                         zap-baseline.py                         -t "${DAST_TARGET}"                         -r auralis-zap-report.html                         -J auralis-zap-report.json                         -I
+                    docker run --rm \
+                        --user 0:0 \
+                        -v "${ZAP_DIR}:/zap/wrk:rw" \
+                        "${ZAP_IMAGE}" \
+                        zap-baseline.py \
+                        -t "${DAST_TARGET}" \
+                        -r auralis-zap-report.html \
+                        -J auralis-zap-report.json \
+                        -I
 
                     echo "========================================"
                     echo "OWASP ZAP Scan Completed"
