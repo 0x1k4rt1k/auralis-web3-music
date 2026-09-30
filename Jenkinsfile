@@ -218,23 +218,35 @@ pipeline {
                  * Read explicit flag files.
                  * This is intentionally simple.
                  */
-                env.BACKEND_CHANGED =
-                    fileExists('.backend.changed') ? 'true' : 'false'
+                env.BACKEND_CHANGED = sh(
+    script: '[ -f .backend.changed ] && echo true || echo false',
+    returnStdout: true
+).trim()
 
-                env.FRONTEND_CHANGED =
-                    fileExists('.frontend.changed') ? 'true' : 'false'
+env.FRONTEND_CHANGED = sh(
+    script: '[ -f .frontend.changed ] && echo true || echo false',
+    returnStdout: true
+).trim()
 
-                env.DATABASE_CHANGED =
-                    fileExists('.database.changed') ? 'true' : 'false'
+env.DATABASE_CHANGED = sh(
+    script: '[ -f .database.changed ] && echo true || echo false',
+    returnStdout: true
+).trim()
 
-                env.K8S_CHANGED =
-                    fileExists('.k8s.changed') ? 'true' : 'false'
+env.K8S_CHANGED = sh(
+    script: '[ -f .k8s.changed ] && echo true || echo false',
+    returnStdout: true
+).trim()
 
-                env.SECURITY_CHANGED =
-                    fileExists('.security.changed') ? 'true' : 'false'
+env.SECURITY_CHANGED = sh(
+    script: '[ -f .security.changed ] && echo true || echo false',
+    returnStdout: true
+).trim()
 
-                env.JENKINS_CHANGED =
-                    fileExists('.jenkins.changed') ? 'true' : 'false'
+env.JENKINS_CHANGED = sh(
+    script: '[ -f .jenkins.changed ] && echo true || echo false',
+    returnStdout: true
+).trim()
 
                 /*
                  * Jenkinsfile/security changes trigger the complete
