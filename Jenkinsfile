@@ -96,71 +96,65 @@ pipeline {
                 '''
 
                 /*
-                 * Read the file directly in Groovy.
-                 * No grep pipe, no regex matching issue.
+                 * IMPORTANT:
+                 * Use shell path matching instead of Groovy .any()
+                 * because the Jenkins environment is not evaluating
+                 * the previous Groovy checks correctly.
                  */
-                def changedFiles = readFile('changed-files.txt')
-                    .readLines()
-                    .collect { it.trim() }
-                    .findAll { it }
 
-                echo '========================================'
-                echo 'Normalized Changed Files'
-                echo '========================================'
+                def backendStatus = sh(
+                    script: "grep -E '^backend/' changed-files.txt >/dev/null 2>&1",
+                    returnStatus: true
+                )
 
-                changedFiles.each { file ->
-                    echo "FILE: [${file}]"
-                }
+                def frontendStatus = sh(
+                    script: "grep -E '^frontend/' changed-files.txt >/dev/null 2>&1",
+                    returnStatus: true
+                )
 
-                def backendChanged = changedFiles.any {
-                    it.startsWith('backend/')
-                }
+                def databaseStatus = sh(
+                    script: "grep -E '^database/' changed-files.txt >/dev/null 2>&1",
+                    returnStatus: true
+                )
 
-                def frontendChanged = changedFiles.any {
-                    it.startsWith('frontend/')
-                }
+                def k8sStatus = sh(
+                    script: "grep -E '^k8s/' changed-files.txt >/dev/null 2>&1",
+                    returnStatus: true
+                )
 
-                def databaseChanged = changedFiles.any {
-                    it.startsWith('database/')
-                }
+                def jenkinsStatus = sh(
+                    script: "grep -E '^Jenkinsfile(\\..*)?$' changed-files.txt >/dev/null 2>&1",
+                    returnStatus: true
+                )
 
-                def k8sChanged = changedFiles.any {
-                    it.startsWith('k8s/')
-                }
-
-                def jenkinsChanged = changedFiles.any {
-                    it == 'Jenkinsfile' ||
-                    it.startsWith('Jenkinsfile.')
-                }
-
-                def securityChanged = changedFiles.any {
-                    it == 'sonar-project.properties' ||
-                    it.startsWith('.gitleaks') ||
-                    it.startsWith('.github/') ||
-                    it.contains('Dockerfile') ||
-                    it.startsWith('docker-compose')
-                }
+                def securityStatus = sh(
+                    script: """
+                        grep -E '^(sonar-project\\.properties|\\.gitleaks|\\.github/|.*Dockerfile.*|docker-compose)' changed-files.txt >/dev/null 2>&1
+                    """,
+                    returnStatus: true
+                )
 
                 env.BACKEND_CHANGED =
-                    backendChanged ? 'true' : 'false'
+                    backendStatus == 0 ? 'true' : 'false'
 
                 env.FRONTEND_CHANGED =
-                    frontendChanged ? 'true' : 'false'
+                    frontendStatus == 0 ? 'true' : 'false'
 
                 env.DATABASE_CHANGED =
-                    databaseChanged ? 'true' : 'false'
+                    databaseStatus == 0 ? 'true' : 'false'
 
                 env.K8S_CHANGED =
-                    k8sChanged ? 'true' : 'false'
-
-                env.SECURITY_CHANGED =
-                    securityChanged ? 'true' : 'false'
+                    k8sStatus == 0 ? 'true' : 'false'
 
                 env.JENKINS_CHANGED =
-                    jenkinsChanged ? 'true' : 'false'
+                    jenkinsStatus == 0 ? 'true' : 'false'
+
+                env.SECURITY_CHANGED =
+                    securityStatus == 0 ? 'true' : 'false'
 
                 env.FULL_PIPELINE =
-                    (jenkinsChanged || securityChanged) ?
+                    (env.JENKINS_CHANGED == 'true' ||
+                     env.SECURITY_CHANGED == 'true') ?
                     'true' : 'false'
 
                 echo '========================================'
