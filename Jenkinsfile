@@ -60,9 +60,18 @@ pipeline {
         stage('Detect Changed Files') {
     steps {
         script {
+
             echo '========================================'
-            echo 'Detecting Changed Files'
+            echo 'DETECTING CHANGED FILES'
             echo '========================================'
+
+            echo 'Jenkinsfile being executed:'
+            sh '''
+                echo "Workspace: ${WORKSPACE}"
+                echo "Commit: ${GIT_COMMIT_SHA}"
+                echo "Jenkinsfile:"
+                git log -1 --oneline -- Jenkinsfile
+            '''
 
             def previousCommit = sh(
                 script: 'git rev-parse HEAD^ 2>/dev/null || true',
@@ -71,7 +80,8 @@ pipeline {
 
             if (!previousCommit) {
 
-                echo 'No previous commit available. Running full pipeline.'
+                echo 'No previous commit found.'
+                echo 'Running FULL PIPELINE.'
 
                 env.BACKEND_CHANGED = 'true'
                 env.FRONTEND_CHANGED = 'true'
@@ -83,91 +93,165 @@ pipeline {
 
             } else {
 
+                /*
+                 * Generate the changed-file list.
+                 */
                 sh """
-                    git diff --name-only ${previousCommit} HEAD > changed-files.txt
+                    set -e
+
+                    git diff --name-only \
+                        ${previousCommit} HEAD \
+                        > changed-files.txt
+
+                    echo "===== RAW CHANGED FILES ====="
+                    cat -A changed-files.txt
+                    echo "============================="
                 """
 
-                echo '========================================'
-                echo 'Changed Files'
-                echo '========================================'
-
+                /*
+                 * Remove old flag files.
+                 */
                 sh '''
-                    cat changed-files.txt
+                    rm -f \
+                        .backend.changed \
+                        .frontend.changed \
+                        .database.changed \
+                        .k8s.changed \
+                        .security.changed \
+                        .jenkins.changed
                 '''
 
                 /*
-                 * Determine changes using simple shell pattern matching.
-                 * No grep -q pipelines and no Groovy regex.
+                 * Determine changes using POSIX shell case matching.
+                 * No grep.
+                 * No regex.
+                 * No Groovy closure.
                  */
+                sh '''
+                    set -e
 
-                def backendStatus = sh(
-                    script: '''
-                        grep -E "^backend/" changed-files.txt >/dev/null 2>&1
-                    ''',
-                    returnStatus: true
-                )
+                    while IFS= read -r file
+                    do
+                        case "$file" in
 
-                def frontendStatus = sh(
-                    script: '''
-                        grep -E "^frontend/" changed-files.txt >/dev/null 2>&1
-                    ''',
-                    returnStatus: true
-                )
+                            backend/*)
+                                echo "backend change detected: [$file]"
+                                touch .backend.changed
+                                ;;
 
-                def databaseStatus = sh(
-                    script: '''
-                        grep -E "^database/" changed-files.txt >/dev/null 2>&1
-                    ''',
-                    returnStatus: true
-                )
+                            frontend/*)
+                                echo "frontend change detected: [$file]"
+                                touch .frontend.changed
+                                ;;
 
-                def k8sStatus = sh(
-                    script: '''
-                        grep -E "^k8s/" changed-files.txt >/dev/null 2>&1
-                    ''',
-                    returnStatus: true
-                )
+                            database/*)
+                                echo "database change detected: [$file]"
+                                touch .database.changed
+                                ;;
 
-                def jenkinsStatus = sh(
-                    script: '''
-                        grep -E "^Jenkinsfile" changed-files.txt >/dev/null 2>&1
-                    ''',
-                    returnStatus: true
-                )
+                            k8s/*)
+                                echo "k8s change detected: [$file]"
+                                touch .k8s.changed
+                                ;;
 
-                def securityStatus = sh(
-                    script: '''
-                        grep -E "^(sonar-project[.]properties|[.]gitleaks|[.]github/|.*Dockerfile.*|docker-compose)" changed-files.txt >/dev/null 2>&1
-                    ''',
-                    returnStatus: true
-                )
+                            Jenkinsfile|Jenkinsfile.*)
+                                echo "Jenkinsfile change detected: [$file]"
+                                touch .jenkins.changed
+                                ;;
 
+                            sonar-project.properties|.gitleaks*|.github/*|*Dockerfile*|docker-compose*)
+                                echo "security change detected: [$file]"
+                                touch .security.changed
+                                ;;
+
+                            *)
+                                echo "other change: [$file]"
+                                ;;
+
+                        esac
+
+                    done < changed-files.txt
+
+                    echo ""
+                    echo "===== DETECTION FLAG FILES ====="
+
+                    if [ -f .backend.changed ]; then
+                        echo "BACKEND=true"
+                    else
+                        echo "BACKEND=false"
+                    fi
+
+                    if [ -f .frontend.changed ]; then
+                        echo "FRONTEND=true"
+                    else
+                        echo "FRONTEND=false"
+                    fi
+
+                    if [ -f .database.changed ]; then
+                        echo "DATABASE=true"
+                    else
+                        echo "DATABASE=false"
+                    fi
+
+                    if [ -f .k8s.changed ]; then
+                        echo "K8S=true"
+                    else
+                        echo "K8S=false"
+                    fi
+
+                    if [ -f .security.changed ]; then
+                        echo "SECURITY=true"
+                    else
+                        echo "SECURITY=false"
+                    fi
+
+                    if [ -f .jenkins.changed ]; then
+                        echo "JENKINS=true"
+                    else
+                        echo "JENKINS=false"
+                    fi
+
+                    echo "================================"
+                '''
+
+                /*
+                 * Read explicit flag files.
+                 * This is intentionally simple.
+                 */
                 env.BACKEND_CHANGED =
-                    backendStatus == 0 ? 'true' : 'false'
+                    fileExists('.backend.changed') ? 'true' : 'false'
 
                 env.FRONTEND_CHANGED =
-                    frontendStatus == 0 ? 'true' : 'false'
+                    fileExists('.frontend.changed') ? 'true' : 'false'
 
                 env.DATABASE_CHANGED =
-                    databaseStatus == 0 ? 'true' : 'false'
+                    fileExists('.database.changed') ? 'true' : 'false'
 
                 env.K8S_CHANGED =
-                    k8sStatus == 0 ? 'true' : 'false'
-
-                env.JENKINS_CHANGED =
-                    jenkinsStatus == 0 ? 'true' : 'false'
+                    fileExists('.k8s.changed') ? 'true' : 'false'
 
                 env.SECURITY_CHANGED =
-                    securityStatus == 0 ? 'true' : 'false'
+                    fileExists('.security.changed') ? 'true' : 'false'
 
-                env.FULL_PIPELINE =
-                    (
-                        env.JENKINS_CHANGED == 'true' ||
-                        env.SECURITY_CHANGED == 'true'
-                    ) ? 'true' : 'false'
+                env.JENKINS_CHANGED =
+                    fileExists('.jenkins.changed') ? 'true' : 'false'
 
+                /*
+                 * Jenkinsfile/security changes trigger the complete
+                 * security/supply-chain pipeline.
+                 */
+                if (
+                    env.JENKINS_CHANGED == 'true' ||
+                    env.SECURITY_CHANGED == 'true'
+                ) {
+                    env.FULL_PIPELINE = 'true'
+                } else {
+                    env.FULL_PIPELINE = 'false'
+                }
+
+                echo ''
                 echo '========================================'
-                echo 'Change Detection Results'
+                echo 'FINAL CHANGE DETECTION RESULTS'
                 echo '========================================'
                 echo "Backend changed:  ${env.BACKEND_CHANGED}"
                 echo "Frontend changed: ${env.FRONTEND_CHANGED}"
