@@ -1396,8 +1396,8 @@ EOF
                         "${ZAP_IMAGE}" \
                         zap-baseline.py \
                         -t "${DAST_TARGET}" \
-                        -r auralis-zap-report.html \
-                        -J auralis-zap-report.json \
+                        -r /zap/wrk/auralis-zap-report.html \
+                        -J /zap/wrk/auralis-zap-report.json \
                         -I
 
                     echo "========================================"
@@ -1527,8 +1527,8 @@ EOF
                         zap-api-scan.py \
                         -t /zap/wrk/auralis-api.yaml \
                         -f openapi \
-                        -r auralis-api-zap-report.html \
-                        -J auralis-api-zap-report.json \
+                        -r /zap/wrk/auralis-api-zap-report.html \
+                        -J /zap/wrk/auralis-api-zap-report.json \
                         -I
 
                     echo "========================================"
