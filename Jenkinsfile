@@ -96,41 +96,49 @@ pipeline {
                 '''
 
                 /*
-                 * IMPORTANT:
-                 * Use shell path matching instead of Groovy .any()
-                 * because the Jenkins environment is not evaluating
-                 * the previous Groovy checks correctly.
+                 * Determine changes using simple shell pattern matching.
+                 * No grep -q pipelines and no Groovy regex.
                  */
 
                 def backendStatus = sh(
-                    script: "grep -E '^backend/' changed-files.txt >/dev/null 2>&1",
+                    script: '''
+                        grep -E "^backend/" changed-files.txt >/dev/null 2>&1
+                    ''',
                     returnStatus: true
                 )
 
                 def frontendStatus = sh(
-                    script: "grep -E '^frontend/' changed-files.txt >/dev/null 2>&1",
+                    script: '''
+                        grep -E "^frontend/" changed-files.txt >/dev/null 2>&1
+                    ''',
                     returnStatus: true
                 )
 
                 def databaseStatus = sh(
-                    script: "grep -E '^database/' changed-files.txt >/dev/null 2>&1",
+                    script: '''
+                        grep -E "^database/" changed-files.txt >/dev/null 2>&1
+                    ''',
                     returnStatus: true
                 )
 
                 def k8sStatus = sh(
-                    script: "grep -E '^k8s/' changed-files.txt >/dev/null 2>&1",
+                    script: '''
+                        grep -E "^k8s/" changed-files.txt >/dev/null 2>&1
+                    ''',
                     returnStatus: true
                 )
 
                 def jenkinsStatus = sh(
-                    script: "grep -E '^Jenkinsfile(\\..*)?$' changed-files.txt >/dev/null 2>&1",
+                    script: '''
+                        grep -E "^Jenkinsfile" changed-files.txt >/dev/null 2>&1
+                    ''',
                     returnStatus: true
                 )
 
                 def securityStatus = sh(
-                    script: """
-                        grep -E '^(sonar-project\\.properties|\\.gitleaks|\\.github/|.*Dockerfile.*|docker-compose)' changed-files.txt >/dev/null 2>&1
-                    """,
+                    script: '''
+                        grep -E "^(sonar-project[.]properties|[.]gitleaks|[.]github/|.*Dockerfile.*|docker-compose)" changed-files.txt >/dev/null 2>&1
+                    ''',
                     returnStatus: true
                 )
 
@@ -153,9 +161,10 @@ pipeline {
                     securityStatus == 0 ? 'true' : 'false'
 
                 env.FULL_PIPELINE =
-                    (env.JENKINS_CHANGED == 'true' ||
-                     env.SECURITY_CHANGED == 'true') ?
-                    'true' : 'false'
+                    (
+                        env.JENKINS_CHANGED == 'true' ||
+                        env.SECURITY_CHANGED == 'true'
+                    ) ? 'true' : 'false'
 
                 echo '========================================'
                 echo 'Change Detection Results'
