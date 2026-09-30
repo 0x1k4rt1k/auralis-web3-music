@@ -18,7 +18,6 @@ pipeline {
         GITLEAKS_IMAGE = 'zricethezav/gitleaks:latest'
         COSIGN_IMAGE = 'ghcr.io/sigstore/cosign/cosign:latest'
         ZAP_IMAGE = 'ghcr.io/zaproxy/zaproxy:stable'
-        KICS_IMAGE = 'checkmarx/kics:v2.2.0'
         DAST_TARGET = 'http://129.154.36.20'
 
         // NOTE: BACKEND_CHANGED, FRONTEND_CHANGED, DATABASE_CHANGED,
@@ -1579,11 +1578,6 @@ EOF
                 fingerprint: true
             )
 
-            archiveArtifacts(
-                artifacts: 'kics-report/*',
-                allowEmptyArchive: true,
-                fingerprint: true
-            )
         }
 
         success {
