@@ -132,11 +132,12 @@ pipeline {
 
                 echo changedFiles ?: 'No changed files detected.'
 
-                def files = changedFiles
-                    ? changedFiles.readLines()
-                        .collect { it.trim() }
-                        .findAll { it }
-                    : []
+                def files = []
+                for (String line : changedFiles.split('\n')) {
+                    if (line.trim()) {
+                        files.add(line.trim())
+                    }
+                }
 
                 def backendChanged = false
                 def frontendChanged = false
@@ -145,40 +146,44 @@ pipeline {
                 def securityChanged = false
                 def jenkinsChanged = false
 
-                files.each { file ->
+                for (int i = 0; i < files.size(); i++) {
 
-                    if (file.startsWith('backend/')) {
+                    def changedPath = files[i].replace('\\', '/')
+
+                    if (changedPath.startsWith('backend/')) {
                         backendChanged = true
                     }
 
-                    if (file.startsWith('frontend/')) {
+                    if (changedPath.startsWith('frontend/')) {
                         frontendChanged = true
                     }
 
-                    if (file.startsWith('database/')) {
+                    if (changedPath.startsWith('database/')) {
                         databaseChanged = true
                     }
 
-                    if (file.startsWith('k8s/')) {
+                    if (changedPath.startsWith('k8s/')) {
                         k8sChanged = true
                     }
 
                     if (
-                        file == 'Jenkinsfile' ||
-                        file.startsWith('Jenkinsfile.')
+                        changedPath == 'Jenkinsfile' ||
+                        changedPath.startsWith('Jenkinsfile.')
                     ) {
                         jenkinsChanged = true
                     }
 
                     if (
-                        file == 'sonar-project.properties' ||
-                        file.startsWith('.gitleaks') ||
-                        file.startsWith('.github/') ||
-                        file.contains('Dockerfile') ||
-                        file.startsWith('docker-compose')
+                        changedPath == 'sonar-project.properties' ||
+                        changedPath.startsWith('.gitleaks') ||
+                        changedPath.startsWith('.github/') ||
+                        changedPath.contains('Dockerfile') ||
+                        changedPath.startsWith('docker-compose')
                     ) {
                         securityChanged = true
                     }
+
+                    echo "Checked: ${changedPath} -> backend=${backendChanged}, frontend=${frontendChanged}, jenkins=${jenkinsChanged}"
                 }
 
                 env.BACKEND_CHANGED  = backendChanged  ? 'true' : 'false'
