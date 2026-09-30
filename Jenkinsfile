@@ -58,117 +58,126 @@ pipeline {
         }
 
         stage('Detect Changed Files') {
-            steps {
-                script {
-                    echo "========================================"
-                    echo "Detecting Changed Files"
-                    echo "========================================"
+    steps {
+        script {
+            echo '========================================'
+            echo 'Detecting Changed Files'
+            echo '========================================'
 
-                    def previousCommit = sh(
-                        script: "git rev-parse HEAD^ 2>/dev/null || true",
-                        returnStdout: true
-                    ).trim()
+            def previousCommit = sh(
+                script: 'git rev-parse HEAD^ 2>/dev/null || true',
+                returnStdout: true
+            ).trim()
 
-                    if (!previousCommit) {
-                        echo "No previous commit available. Running full pipeline."
-                        env.BACKEND_CHANGED = 'true'
-                        env.FRONTEND_CHANGED = 'true'
-                        env.DATABASE_CHANGED = 'true'
-                        env.K8S_CHANGED = 'true'
-                        env.SECURITY_CHANGED = 'true'
-                        env.JENKINS_CHANGED = 'true'
-                        env.FULL_PIPELINE = 'true'
-                    } else {
-                        def changedOutput = sh(
-                            script: "git diff --name-only ${previousCommit} HEAD",
-                            returnStdout: true
-                        ).trim()
+            if (!previousCommit) {
 
-                        echo "========================================"
-                        echo "Changed Files"
-                        echo "========================================"
+                echo 'No previous commit available. Running full pipeline.'
 
-                        if (changedOutput) {
-                            changedOutput.readLines().each { file ->
-                                echo "FILE: [${file.trim()}]"
-                            }
-                        } else {
-                            echo "No changed files detected."
-                        }
+                env.BACKEND_CHANGED = 'true'
+                env.FRONTEND_CHANGED = 'true'
+                env.DATABASE_CHANGED = 'true'
+                env.K8S_CHANGED = 'true'
+                env.SECURITY_CHANGED = 'true'
+                env.JENKINS_CHANGED = 'true'
+                env.FULL_PIPELINE = 'true'
 
-                        /*
-                         * Detect changes from the exact changed-file list.
-                         * grep returns 0 when a matching path exists.
-                         */
-                        def backendStatus = sh(
-                            script: "git diff --name-only ${previousCommit} HEAD | grep -q '^backend/'",
-                            returnStatus: true
-                        )
+            } else {
 
-                        def frontendStatus = sh(
-                            script: "git diff --name-only ${previousCommit} HEAD | grep -q '^frontend/'",
-                            returnStatus: true
-                        )
+                sh """
+                    git diff --name-only ${previousCommit} HEAD > changed-files.txt
+                """
 
-                        def databaseStatus = sh(
-                            script: "git diff --name-only ${previousCommit} HEAD | grep -q '^database/'",
-                            returnStatus: true
-                        )
+                echo '========================================'
+                echo 'Changed Files'
+                echo '========================================'
 
-                        def k8sStatus = sh(
-                            script: "git diff --name-only ${previousCommit} HEAD | grep -q '^k8s/'",
-                            returnStatus: true
-                        )
+                sh '''
+                    cat changed-files.txt
+                '''
 
-                        def jenkinsStatus = sh(
-                            script: "git diff --name-only ${previousCommit} HEAD | grep -Eq '^(Jenkinsfile|Jenkinsfile\\.)'",
-                            returnStatus: true
-                        )
+                /*
+                 * Read the file directly in Groovy.
+                 * No grep pipe, no regex matching issue.
+                 */
+                def changedFiles = readFile('changed-files.txt')
+                    .readLines()
+                    .collect { it.trim() }
+                    .findAll { it }
 
-                        def securityStatus = sh(
-                            script: "git diff --name-only ${previousCommit} HEAD | grep -Eq '^(sonar-project\\.properties|\\.gitleaks|\\.github/|.*Dockerfile.*|docker-compose)'",
-                            returnStatus: true
-                        )
+                echo '========================================'
+                echo 'Normalized Changed Files'
+                echo '========================================'
 
-                        /*
-                         * grep exit codes:
-                         *   0 = matching changed file exists
-                         *   1 = no matching changed file
-                         */
-                        def backendChanged = backendStatus == 0
-                        def frontendChanged = frontendStatus == 0
-                        def databaseChanged = databaseStatus == 0
-                        def k8sChanged = k8sStatus == 0
-                        def jenkinsChanged = jenkinsStatus == 0
-                        def securityChanged = securityStatus == 0
-
-                        env.BACKEND_CHANGED = backendChanged ? 'true' : 'false'
-                        env.FRONTEND_CHANGED = frontendChanged ? 'true' : 'false'
-                        env.DATABASE_CHANGED = databaseChanged ? 'true' : 'false'
-                        env.K8S_CHANGED = k8sChanged ? 'true' : 'false'
-                        env.SECURITY_CHANGED = securityChanged ? 'true' : 'false'
-                        env.JENKINS_CHANGED = jenkinsChanged ? 'true' : 'false'
-
-                        env.FULL_PIPELINE = (
-                            jenkinsChanged ||
-                            securityChanged
-                        ) ? 'true' : 'false'
-
-                        echo "========================================"
-                        echo "Change Detection Results"
-                        echo "========================================"
-                        echo "Backend changed:  ${env.BACKEND_CHANGED}"
-                        echo "Frontend changed: ${env.FRONTEND_CHANGED}"
-                        echo "Database changed: ${env.DATABASE_CHANGED}"
-                        echo "K8s changed:      ${env.K8S_CHANGED}"
-                        echo "Security changed: ${env.SECURITY_CHANGED}"
-                        echo "Jenkins changed:  ${env.JENKINS_CHANGED}"
-                        echo "Full pipeline:    ${env.FULL_PIPELINE}"
-                        echo "========================================"
-                    }
+                changedFiles.each { file ->
+                    echo "FILE: [${file}]"
                 }
+
+                def backendChanged = changedFiles.any {
+                    it.startsWith('backend/')
+                }
+
+                def frontendChanged = changedFiles.any {
+                    it.startsWith('frontend/')
+                }
+
+                def databaseChanged = changedFiles.any {
+                    it.startsWith('database/')
+                }
+
+                def k8sChanged = changedFiles.any {
+                    it.startsWith('k8s/')
+                }
+
+                def jenkinsChanged = changedFiles.any {
+                    it == 'Jenkinsfile' ||
+                    it.startsWith('Jenkinsfile.')
+                }
+
+                def securityChanged = changedFiles.any {
+                    it == 'sonar-project.properties' ||
+                    it.startsWith('.gitleaks') ||
+                    it.startsWith('.github/') ||
+                    it.contains('Dockerfile') ||
+                    it.startsWith('docker-compose')
+                }
+
+                env.BACKEND_CHANGED =
+                    backendChanged ? 'true' : 'false'
+
+                env.FRONTEND_CHANGED =
+                    frontendChanged ? 'true' : 'false'
+
+                env.DATABASE_CHANGED =
+                    databaseChanged ? 'true' : 'false'
+
+                env.K8S_CHANGED =
+                    k8sChanged ? 'true' : 'false'
+
+                env.SECURITY_CHANGED =
+                    securityChanged ? 'true' : 'false'
+
+                env.JENKINS_CHANGED =
+                    jenkinsChanged ? 'true' : 'false'
+
+                env.FULL_PIPELINE =
+                    (jenkinsChanged || securityChanged) ?
+                    'true' : 'false'
+
+                echo '========================================'
+                echo 'Change Detection Results'
+                echo '========================================'
+                echo "Backend changed:  ${env.BACKEND_CHANGED}"
+                echo "Frontend changed: ${env.FRONTEND_CHANGED}"
+                echo "Database changed: ${env.DATABASE_CHANGED}"
+                echo "K8s changed:      ${env.K8S_CHANGED}"
+                echo "Security changed: ${env.SECURITY_CHANGED}"
+                echo "Jenkins changed:  ${env.JENKINS_CHANGED}"
+                echo "Full pipeline:    ${env.FULL_PIPELINE}"
+                echo '========================================'
             }
         }
+    }
+}
 
         stage('Kubernetes IaC Security - KICS') {
             when {
