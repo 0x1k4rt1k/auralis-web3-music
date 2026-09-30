@@ -67,9 +67,15 @@ pipeline {
 
                     if (!previousCommit) {
                         echo "No previous commit available. Running full pipeline."
+                        env.BACKEND_CHANGED = 'true'
+                        env.FRONTEND_CHANGED = 'true'
+                        env.DATABASE_CHANGED = 'true'
+                        env.K8S_CHANGED = 'true'
+                        env.SECURITY_CHANGED = 'true'
+                        env.JENKINS_CHANGED = 'true'
                         env.FULL_PIPELINE = 'true'
                     } else {
-                        def changedFiles = sh(
+                        def changedOutput = sh(
                             script: "git diff --name-only ${previousCommit} HEAD",
                             returnStdout: true
                         ).trim()
@@ -77,40 +83,71 @@ pipeline {
                         echo "========================================"
                         echo "Changed Files"
                         echo "========================================"
-                        echo changedFiles ?: "No changed files detected."
+                        echo changedOutput ?: "No changed files detected."
 
-                        def files = changedFiles ? changedFiles.split("\\n") : []
+                        // Normalize every path before checking it.
+                        // This avoids regex/whitespace issues in Jenkins/Groovy.
+                        def files = changedOutput
+                            ? changedOutput.readLines()
+                                .collect { it.trim() }
+                                .findAll { it }
+                            : []
 
-                        env.BACKEND_CHANGED = files.any {
-                            it ==~ /^backend\/.*$/
-                        } ? 'true' : 'false'
+                        def backendChanged = false
+                        def frontendChanged = false
+                        def databaseChanged = false
+                        def k8sChanged = false
+                        def securityChanged = false
+                        def jenkinsChanged = false
 
-                        env.FRONTEND_CHANGED = files.any {
-                            it ==~ /^frontend\/.*$/
-                        } ? 'true' : 'false'
+                        files.each { file ->
+                            if (file.startsWith('backend/')) {
+                                backendChanged = true
+                            }
 
-                        env.DATABASE_CHANGED = files.any {
-                            it ==~ /^database\/.*$/
-                        } ? 'true' : 'false'
+                            if (file.startsWith('frontend/')) {
+                                frontendChanged = true
+                            }
 
-                        env.K8S_CHANGED = files.any {
-                            it ==~ /^k8s\/.*$/
-                        } ? 'true' : 'false'
+                            if (file.startsWith('database/')) {
+                                databaseChanged = true
+                            }
 
-                        env.JENKINS_CHANGED = files.any {
-                            it == 'Jenkinsfile' || it ==~ /^Jenkinsfile.*$/
-                        } ? 'true' : 'false'
+                            if (file.startsWith('k8s/')) {
+                                k8sChanged = true
+                            }
 
-                        env.SECURITY_CHANGED = files.any {
-                            it ==~ /^(sonar-project\.properties|\.gitleaks.*|.*\.github\/.*|.*Dockerfile.*|docker-compose.*)$/
-                        } ? 'true' : 'false'
+                            if (
+                                file == 'Jenkinsfile' ||
+                                file.startsWith('Jenkinsfile.')
+                            ) {
+                                jenkinsChanged = true
+                            }
 
-                        if (
-                            env.JENKINS_CHANGED == 'true' ||
-                            env.SECURITY_CHANGED == 'true'
-                        ) {
-                            env.FULL_PIPELINE = 'true'
+                            if (
+                                file == 'sonar-project.properties' ||
+                                file.startsWith('.gitleaks') ||
+                                file.startsWith('.github/') ||
+                                file.contains('Dockerfile') ||
+                                file.startsWith('docker-compose')
+                            ) {
+                                securityChanged = true
+                            }
                         }
+
+                        env.BACKEND_CHANGED = backendChanged.toString()
+                        env.FRONTEND_CHANGED = frontendChanged.toString()
+                        env.DATABASE_CHANGED = databaseChanged.toString()
+                        env.K8S_CHANGED = k8sChanged.toString()
+                        env.SECURITY_CHANGED = securityChanged.toString()
+                        env.JENKINS_CHANGED = jenkinsChanged.toString()
+
+                        // Jenkinsfile/security changes intentionally trigger
+                        // the complete security/supply-chain pipeline.
+                        env.FULL_PIPELINE = (
+                            jenkinsChanged ||
+                            securityChanged
+                        ).toString()
 
                         echo "========================================"
                         echo "Change Detection Results"
@@ -1135,21 +1172,45 @@ pipeline {
                     echo "========================================"
                     echo "SBOM Traceability Metadata"
                     echo "========================================"
-                    echo "Creating traceability after both images are pushed and Cosign-verified."
-
-                    BACKEND_IMAGE_ID=$(docker image inspect \
-                        --format='{{.Id}}' \
-                        ${APP_IMAGE}:${APP_VERSION} 2>/dev/null || true)
-
-                    FRONTEND_IMAGE_ID=$(docker image inspect \
-                        --format='{{.Id}}' \
-                        ${FRONTEND_IMAGE}:${APP_VERSION} 2>/dev/null || true)
+                    echo "Creating traceability only for images built in this pipeline."
 
                     BUILD_TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-                    BACKEND_DIGEST=$(docker image inspect                         --format='{{index .RepoDigests 0}}'                         ${OCIR_REPOSITORY}:backend-${APP_VERSION})
+                    BACKEND_IMAGE_ID=""
+                    BACKEND_DIGEST=""
+                    FRONTEND_IMAGE_ID=""
+                    FRONTEND_DIGEST=""
+                    BACKEND_PROCESSED=false
+                    FRONTEND_PROCESSED=false
 
-                    FRONTEND_DIGEST=$(docker image inspect                         --format='{{index .RepoDigests 0}}'                         ${OCIR_REPOSITORY}:frontend-${APP_VERSION})
+                    if [ "${FULL_PIPELINE}" = "true" ] || \
+                       [ "${BACKEND_CHANGED}" = "true" ] || \
+                       [ "${DATABASE_CHANGED}" = "true" ]; then
+
+                        BACKEND_PROCESSED=true
+
+                        BACKEND_IMAGE_ID=$(docker image inspect \
+                            --format='{{.Id}}' \
+                            ${APP_IMAGE}:${APP_VERSION} 2>/dev/null || true)
+
+                        BACKEND_DIGEST=$(docker image inspect \
+                            --format='{{index .RepoDigests 0}}' \
+                            ${OCIR_REPOSITORY}:backend-${APP_VERSION} 2>/dev/null || true)
+                    fi
+
+                    if [ "${FULL_PIPELINE}" = "true" ] || \
+                       [ "${FRONTEND_CHANGED}" = "true" ]; then
+
+                        FRONTEND_PROCESSED=true
+
+                        FRONTEND_IMAGE_ID=$(docker image inspect \
+                            --format='{{.Id}}' \
+                            ${FRONTEND_IMAGE}:${APP_VERSION} 2>/dev/null || true)
+
+                        FRONTEND_DIGEST=$(docker image inspect \
+                            --format='{{index .RepoDigests 0}}' \
+                            ${OCIR_REPOSITORY}:frontend-${APP_VERSION} 2>/dev/null || true)
+                    fi
 
                     cat > "sbom/traceability-${APP_VERSION}.json" <<EOF
 {
@@ -1172,16 +1233,20 @@ pipeline {
     "cosign_image": "${COSIGN_IMAGE}"
   },
   "backend": {
+    "processed": ${BACKEND_PROCESSED},
     "image": "${OCIR_REPOSITORY}:backend-${APP_VERSION}",
     "local_image": "${APP_IMAGE}:${APP_VERSION}",
     "image_id": "${BACKEND_IMAGE_ID}",
+    "digest": "${BACKEND_DIGEST}",
     "sbom": "backend-${APP_VERSION}-sbom.json",
     "grype_report": "backend-${APP_VERSION}-grype.json"
   },
   "frontend": {
+    "processed": ${FRONTEND_PROCESSED},
     "image": "${OCIR_REPOSITORY}:frontend-${APP_VERSION}",
     "local_image": "${FRONTEND_IMAGE}:${APP_VERSION}",
     "image_id": "${FRONTEND_IMAGE_ID}",
+    "digest": "${FRONTEND_DIGEST}",
     "sbom": "frontend-${APP_VERSION}-sbom.json",
     "grype_report": "frontend-${APP_VERSION}-grype.json"
   },
@@ -1200,6 +1265,7 @@ EOF
                 '''
             }
         }
+
 
         stage('Update GitOps Manifests') {
             when {
@@ -1220,6 +1286,8 @@ EOF
                     )
                 ]) {
                     sh '''
+                        set -e
+
                         echo "===== Updating GitOps Manifests ====="
 
                         echo "Current backend image:"
@@ -1228,17 +1296,32 @@ EOF
                         echo "Current frontend image:"
                         grep "image:" k8s/frontend.yaml
 
-                        echo "Updating backend image to build ${APP_VERSION}"
+                        # Only update the manifest for an image that was
+                        # actually built and pushed in this pipeline.
+                        if [ "${FULL_PIPELINE}" = "true" ] || \
+                           [ "${BACKEND_CHANGED}" = "true" ] || \
+                           [ "${DATABASE_CHANGED}" = "true" ]; then
 
-                        sed -i \
-                            "s#image: hyd.ocir.io/axedsxii3ulu/auralis:backend-[^[:space:]]*#image: hyd.ocir.io/axedsxii3ulu/auralis:backend-${APP_VERSION}#" \
-                            k8s/backend.yaml
+                            echo "Updating backend image to build ${APP_VERSION}"
 
-                        echo "Updating frontend image to build ${APP_VERSION}"
+                            sed -i \
+                                "s#image: hyd.ocir.io/axedsxii3ulu/auralis:backend-[^[:space:]]*#image: hyd.ocir.io/axedsxii3ulu/auralis:backend-${APP_VERSION}#" \
+                                k8s/backend.yaml
+                        else
+                            echo "Backend image unchanged."
+                        fi
 
-                        sed -i \
-                            "s#image: hyd.ocir.io/axedsxii3ulu/auralis:frontend-[^[:space:]]*#image: hyd.ocir.io/axedsxii3ulu/auralis:frontend-${APP_VERSION}#" \
-                            k8s/frontend.yaml
+                        if [ "${FULL_PIPELINE}" = "true" ] || \
+                           [ "${FRONTEND_CHANGED}" = "true" ]; then
+
+                            echo "Updating frontend image to build ${APP_VERSION}"
+
+                            sed -i \
+                                "s#image: hyd.ocir.io/axedsxii3ulu/auralis:frontend-[^[:space:]]*#image: hyd.ocir.io/axedsxii3ulu/auralis:frontend-${APP_VERSION}#" \
+                                k8s/frontend.yaml
+                        else
+                            echo "Frontend image unchanged."
+                        fi
 
                         echo "Updated backend image:"
                         grep "image:" k8s/backend.yaml
@@ -1252,7 +1335,7 @@ EOF
                         git add k8s/backend.yaml k8s/frontend.yaml
 
                         if git diff --cached --quiet; then
-                            echo "No GitOps changes detected."
+                            echo "No GitOps image changes detected."
                             exit 0
                         fi
 
@@ -1271,7 +1354,8 @@ EOF
             }
         }
 
-        stage('DAST - OWASP ZAP Baseline') {
+
+stage('DAST - OWASP ZAP Baseline') {
             when {
                 expression {
                     env.FULL_PIPELINE == 'true' ||
