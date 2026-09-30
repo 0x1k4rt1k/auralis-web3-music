@@ -97,63 +97,50 @@ pipeline {
                         }
 
                         /*
-                         * Use Git pathspec checks instead of Groovy regex/path
-                         * parsing. This makes component detection independent
-                         * of Jenkins/Groovy string matching behavior.
-                         *
-                         * returnStatus == 0 means at least one changed file
-                         * exists under that path.
+                         * Detect changes from the exact changed-file list.
+                         * grep returns 0 when a matching path exists.
                          */
                         def backendStatus = sh(
-                            script: "git diff --quiet ${previousCommit} HEAD -- backend/",
+                            script: "git diff --name-only ${previousCommit} HEAD | grep -q '^backend/'",
                             returnStatus: true
                         )
 
                         def frontendStatus = sh(
-                            script: "git diff --quiet ${previousCommit} HEAD -- frontend/",
+                            script: "git diff --name-only ${previousCommit} HEAD | grep -q '^frontend/'",
                             returnStatus: true
                         )
 
                         def databaseStatus = sh(
-                            script: "git diff --quiet ${previousCommit} HEAD -- database/",
+                            script: "git diff --name-only ${previousCommit} HEAD | grep -q '^database/'",
                             returnStatus: true
                         )
 
                         def k8sStatus = sh(
-                            script: "git diff --quiet ${previousCommit} HEAD -- k8s/",
+                            script: "git diff --name-only ${previousCommit} HEAD | grep -q '^k8s/'",
                             returnStatus: true
                         )
 
                         def jenkinsStatus = sh(
-                            script: "git diff --quiet ${previousCommit} HEAD -- Jenkinsfile 'Jenkinsfile.*'",
+                            script: "git diff --name-only ${previousCommit} HEAD | grep -Eq '^(Jenkinsfile|Jenkinsfile\\.)'",
                             returnStatus: true
                         )
 
                         def securityStatus = sh(
-                            script: """
-                                git diff --quiet ${previousCommit} HEAD -- \
-                                    sonar-project.properties \
-                                    .gitleaks* \
-                                    .github/ \
-                                    '*Dockerfile*' \
-                                    docker-compose*
-                            """,
+                            script: "git diff --name-only ${previousCommit} HEAD | grep -Eq '^(sonar-project\\.properties|\\.gitleaks|\\.github/|.*Dockerfile.*|docker-compose)'",
                             returnStatus: true
                         )
 
                         /*
-                         * git diff --quiet returns:
-                         *   0 = no matching changes
-                         *   1 = matching changes exist
-                         *
-                         * Any non-zero value is treated as changed.
+                         * grep exit codes:
+                         *   0 = matching changed file exists
+                         *   1 = no matching changed file
                          */
-                        def backendChanged = backendStatus != 0
-                        def frontendChanged = frontendStatus != 0
-                        def databaseChanged = databaseStatus != 0
-                        def k8sChanged = k8sStatus != 0
-                        def jenkinsChanged = jenkinsStatus != 0
-                        def securityChanged = securityStatus != 0
+                        def backendChanged = backendStatus == 0
+                        def frontendChanged = frontendStatus == 0
+                        def databaseChanged = databaseStatus == 0
+                        def k8sChanged = k8sStatus == 0
+                        def jenkinsChanged = jenkinsStatus == 0
+                        def securityChanged = securityStatus == 0
 
                         env.BACKEND_CHANGED = backendChanged ? 'true' : 'false'
                         env.FRONTEND_CHANGED = frontendChanged ? 'true' : 'false'
@@ -162,10 +149,6 @@ pipeline {
                         env.SECURITY_CHANGED = securityChanged ? 'true' : 'false'
                         env.JENKINS_CHANGED = jenkinsChanged ? 'true' : 'false'
 
-                        /*
-                         * Jenkinsfile/security changes intentionally trigger
-                         * the complete security/supply-chain pipeline.
-                         */
                         env.FULL_PIPELINE = (
                             jenkinsChanged ||
                             securityChanged
