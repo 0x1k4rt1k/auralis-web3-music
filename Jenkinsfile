@@ -64,14 +64,56 @@ pipeline {
             echo 'DETECTING CHANGED FILES'
             echo '========================================'
 
-            def previousCommit = sh(
-                script: 'git rev-parse HEAD^ 2>/dev/null || true',
+            def currentCommit = sh(
+                script: 'git rev-parse HEAD',
                 returnStdout: true
             ).trim()
 
-            if (!previousCommit) {
+            // Prefer last successful build's commit, fall back to HEAD^
+            def previousCommit = env.GIT_PREVIOUS_SUCCESSFUL_COMMIT ?: ''
 
-                echo 'No previous commit available.'
+            // Make sure that commit actually exists in this checkout
+            // (it can be missing after a force-push or a shallow clone)
+            if (previousCommit) {
+                def exists = sh(
+                    script: "git cat-file -e ${previousCommit}^{commit} 2>/dev/null",
+                    returnStatus: true
+                )
+                if (exists != 0) {
+                    echo "Previous successful commit ${previousCommit} not found in checkout. Falling back to HEAD^."
+                    previousCommit = ''
+                }
+            }
+
+            if (!previousCommit) {
+                previousCommit = sh(
+                    script: 'git rev-parse HEAD^ 2>/dev/null || true',
+                    returnStdout: true
+                ).trim()
+            }
+
+            echo "Current commit:  ${currentCommit}"
+            echo "Compared to:     ${previousCommit ?: 'N/A'}"
+
+            // Debug info: recent history and working tree state
+            sh 'git log --oneline -5'
+            sh 'git status --short'
+
+            def changedFiles = ''
+            def diffOk = false
+
+            if (previousCommit) {
+                def diffResult = sh(
+                    script: "git diff --name-only ${previousCommit} ${currentCommit}",
+                    returnStdout: true
+                ).trim()
+                changedFiles = diffResult
+                diffOk = true
+            }
+
+            if (!previousCommit || !diffOk) {
+
+                echo 'No previous commit available (or diff failed).'
                 echo 'Running FULL PIPELINE.'
 
                 env.BACKEND_CHANGED = 'true'
@@ -83,13 +125,6 @@ pipeline {
                 env.FULL_PIPELINE = 'true'
 
             } else {
-
-                def changedFiles = sh(
-                    script: """
-                        git diff --name-only ${previousCommit} HEAD
-                    """,
-                    returnStdout: true
-                ).trim()
 
                 echo '========================================'
                 echo 'Changed Files'
@@ -146,27 +181,15 @@ pipeline {
                     }
                 }
 
-                env.BACKEND_CHANGED =
-                    backendChanged ? 'true' : 'false'
-
-                env.FRONTEND_CHANGED =
-                    frontendChanged ? 'true' : 'false'
-
-                env.DATABASE_CHANGED =
-                    databaseChanged ? 'true' : 'false'
-
-                env.K8S_CHANGED =
-                    k8sChanged ? 'true' : 'false'
-
-                env.SECURITY_CHANGED =
-                    securityChanged ? 'true' : 'false'
-
-                env.JENKINS_CHANGED =
-                    jenkinsChanged ? 'true' : 'false'
+                env.BACKEND_CHANGED  = backendChanged  ? 'true' : 'false'
+                env.FRONTEND_CHANGED = frontendChanged ? 'true' : 'false'
+                env.DATABASE_CHANGED = databaseChanged ? 'true' : 'false'
+                env.K8S_CHANGED      = k8sChanged      ? 'true' : 'false'
+                env.SECURITY_CHANGED = securityChanged ? 'true' : 'false'
+                env.JENKINS_CHANGED  = jenkinsChanged  ? 'true' : 'false'
 
                 env.FULL_PIPELINE =
-                    (jenkinsChanged || securityChanged) ?
-                    'true' : 'false'
+                    (jenkinsChanged || securityChanged) ? 'true' : 'false'
 
                 echo '========================================'
                 echo 'CHANGE DETECTION RESULTS'
