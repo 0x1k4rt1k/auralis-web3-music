@@ -84,120 +84,92 @@ pipeline {
 
             } else {
 
-                sh """
-                    set -e
-
-                    git diff --name-only \
-                        ${previousCommit} HEAD \
-                        > changed-files.txt
-
-                    echo "===== CHANGED FILES ====="
-                    cat changed-files.txt
-                    echo "========================="
-                """
-
-                /*
-                 * Calculate ALL change flags in one shell.
-                 *
-                 * Important:
-                 * - No grep -q
-                 * - No Groovy .any()
-                 * - No fileExists()
-                 * - No temporary flag files
-                 * - No regex inside Groovy
-                 */
-                def changeFlags = sh(
-                    script: '''
-                        set -e
-
-                        BACKEND=false
-                        FRONTEND=false
-                        DATABASE=false
-                        K8S=false
-                        SECURITY=false
-                        JENKINS=false
-
-                        while IFS= read -r file
-                        do
-                            case "$file" in
-
-                                backend/*)
-                                    BACKEND=true
-                                    ;;
-
-                                frontend/*)
-                                    FRONTEND=true
-                                    ;;
-
-                                database/*)
-                                    DATABASE=true
-                                    ;;
-
-                                k8s/*)
-                                    K8S=true
-                                    ;;
-
-                                Jenkinsfile|Jenkinsfile.*)
-                                    JENKINS=true
-                                    ;;
-
-                                sonar-project.properties|.gitleaks*|.github/*|*Dockerfile*|docker-compose*)
-                                    SECURITY=true
-                                    ;;
-
-                            esac
-                        done < changed-files.txt
-
-                        echo "BACKEND=${BACKEND}"
-                        echo "FRONTEND=${FRONTEND}"
-                        echo "DATABASE=${DATABASE}"
-                        echo "K8S=${K8S}"
-                        echo "SECURITY=${SECURITY}"
-                        echo "JENKINS=${JENKINS}"
-                    ''',
+                def changedFiles = sh(
+                    script: """
+                        git diff --name-only ${previousCommit} HEAD
+                    """,
                     returnStdout: true
                 ).trim()
 
                 echo '========================================'
-                echo 'Shell Change Detection'
-                echo '========================================'
-                echo changeFlags
+                echo 'Changed Files'
                 echo '========================================'
 
-                /*
-                 * Parse the six explicit KEY=VALUE lines.
-                 */
-                def flags = [:]
+                echo changedFiles ?: 'No changed files detected.'
 
-                changeFlags.readLines().each { line ->
-                    def parts = line.split('=', 2)
+                def files = changedFiles
+                    ? changedFiles.readLines()
+                        .collect { it.trim() }
+                        .findAll { it }
+                    : []
 
-                    if (parts.size() == 2) {
-                        flags[parts[0].trim()] = parts[1].trim()
+                def backendChanged = false
+                def frontendChanged = false
+                def databaseChanged = false
+                def k8sChanged = false
+                def securityChanged = false
+                def jenkinsChanged = false
+
+                files.each { file ->
+
+                    if (file.startsWith('backend/')) {
+                        backendChanged = true
+                    }
+
+                    if (file.startsWith('frontend/')) {
+                        frontendChanged = true
+                    }
+
+                    if (file.startsWith('database/')) {
+                        databaseChanged = true
+                    }
+
+                    if (file.startsWith('k8s/')) {
+                        k8sChanged = true
+                    }
+
+                    if (
+                        file == 'Jenkinsfile' ||
+                        file.startsWith('Jenkinsfile.')
+                    ) {
+                        jenkinsChanged = true
+                    }
+
+                    if (
+                        file == 'sonar-project.properties' ||
+                        file.startsWith('.gitleaks') ||
+                        file.startsWith('.github/') ||
+                        file.contains('Dockerfile') ||
+                        file.startsWith('docker-compose')
+                    ) {
+                        securityChanged = true
                     }
                 }
 
-                /*
-                 * Set Jenkins environment variables.
-                 */
-                env.BACKEND_CHANGED = flags['BACKEND'] ?: 'false'
-                env.FRONTEND_CHANGED = flags['FRONTEND'] ?: 'false'
-                env.DATABASE_CHANGED = flags['DATABASE'] ?: 'false'
-                env.K8S_CHANGED = flags['K8S'] ?: 'false'
-                env.SECURITY_CHANGED = flags['SECURITY'] ?: 'false'
-                env.JENKINS_CHANGED = flags['JENKINS'] ?: 'false'
+                env.BACKEND_CHANGED =
+                    backendChanged ? 'true' : 'false'
 
-                if (
-                    env.JENKINS_CHANGED == 'true' ||
-                    env.SECURITY_CHANGED == 'true'
-                ) {
-                    env.FULL_PIPELINE = 'true'
-                } else {
-                    env.FULL_PIPELINE = 'false'
-                }
+                env.FRONTEND_CHANGED =
+                    frontendChanged ? 'true' : 'false'
+
+                env.DATABASE_CHANGED =
+                    databaseChanged ? 'true' : 'false'
+
+                env.K8S_CHANGED =
+                    k8sChanged ? 'true' : 'false'
+
+                env.SECURITY_CHANGED =
+                    securityChanged ? 'true' : 'false'
+
+                env.JENKINS_CHANGED =
+                    jenkinsChanged ? 'true' : 'false'
+
+                env.FULL_PIPELINE =
+                    (jenkinsChanged || securityChanged) ?
+                    'true' : 'false'
 
                 echo '========================================'
-                echo 'FINAL CHANGE DETECTION RESULTS'
+                echo 'CHANGE DETECTION RESULTS'
                 echo '========================================'
                 echo "Backend changed:  ${env.BACKEND_CHANGED}"
                 echo "Frontend changed: ${env.FRONTEND_CHANGED}"
