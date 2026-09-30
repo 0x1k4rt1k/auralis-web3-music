@@ -17,7 +17,7 @@ spec:
         - name: ocir-pull-secret
       containers:
         - name: backend
-          image: hyd.ocir.io/axedsxii3ulu/auralis:backend-71
+          image: hyd.ocir.io/axedsxii3ulu/auralis:backend-72
           imagePullPolicy: Always
           ports:
             - containerPort: 3000
