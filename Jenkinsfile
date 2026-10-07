@@ -10,22 +10,23 @@ pipeline {
         FRONTEND_IMAGE = 'auralis-frontend'
         APP_VERSION = "${BUILD_NUMBER}"
 
-        OCIR_REGISTRY = 'hyd.ocir.io'
-        OCIR_REPOSITORY = 'hyd.ocir.io/axedsxii3ulu/auralis'
+        DOCKERHUB_REPOSITORY = '0x1k4rt1k/auralis-backend'
+        DOCKERHUB_FRONTEND_REPOSITORY = '0x1k4rt1k/auralis-frontend'
 
         SYFT_VERSION = 'v1.52.0'
         GRYPE_IMAGE = 'anchore/grype:latest'
         GITLEAKS_IMAGE = 'zricethezav/gitleaks:latest'
         COSIGN_IMAGE = 'ghcr.io/sigstore/cosign/cosign:latest'
         ZAP_IMAGE = 'ghcr.io/zaproxy/zaproxy:stable'
-        DAST_TARGET = 'http://129.154.36.20'
+        DAST_TARGET = 'http://host.docker.internal:8080'
 
-        // NOTE: BACKEND_CHANGED, FRONTEND_CHANGED, DATABASE_CHANGED,
-        // K8S_CHANGED, SECURITY_CHANGED, JENKINS_CHANGED and FULL_PIPELINE
-        // are intentionally NOT declared here. Values declared in this block
-        // override env.X assignments made later in a script block, which
-        // kept the change flags stuck at 'false'. They are set in the
-        // 'Detect Changed Files' stage instead.
+        BACKEND_CHANGED = 'false'
+        FRONTEND_CHANGED = 'false'
+        DATABASE_CHANGED = 'false'
+        K8S_CHANGED = 'false'
+        SECURITY_CHANGED = 'false'
+        JENKINS_CHANGED = 'false'
+        FULL_PIPELINE = 'false'
     }
 
     stages {
@@ -58,159 +59,73 @@ pipeline {
         stage('Detect Changed Files') {
             steps {
                 script {
-                    echo '========================================'
-                    echo 'DETECTING CHANGED FILES'
-                    echo '========================================'
-
-                    def currentCommit = sh(
-                        script: 'git rev-parse HEAD',
+                    def previousCommit = sh(
+                        script: "git rev-parse HEAD^ 2>/dev/null || true",
                         returnStdout: true
                     ).trim()
 
-                    // Prefer last successful build's commit, fall back to HEAD^
-                    def previousCommit = env.GIT_PREVIOUS_SUCCESSFUL_COMMIT ?: ''
-
-                    // Make sure that commit actually exists in this checkout
-                    // (it can be missing after a force-push or a shallow clone)
-                    if (previousCommit) {
-                        def exists = sh(
-                            script: "git cat-file -e ${previousCommit}^{commit} 2>/dev/null",
-                            returnStatus: true
-                        )
-                        if (exists != 0) {
-                            echo "Previous successful commit ${previousCommit} not found in checkout. Falling back to HEAD^."
-                            previousCommit = ''
-                        }
-                    }
-
                     if (!previousCommit) {
-                        previousCommit = sh(
-                            script: 'git rev-parse HEAD^ 2>/dev/null || true',
-                            returnStdout: true
-                        ).trim()
-                    }
-
-                    echo "Current commit:  ${currentCommit}"
-                    echo "Compared to:     ${previousCommit ?: 'N/A'}"
-
-                    // Debug info (safe to remove once everything works)
-                    sh 'git log --oneline -5'
-                    sh 'git status --short'
-
-                    def changedFiles = ''
-                    def diffOk = false
-
-                    if (previousCommit) {
-                        changedFiles = sh(
-                            script: "git diff --name-only ${previousCommit} ${currentCommit}",
-                            returnStdout: true
-                        ).trim()
-                        diffOk = true
-                    }
-
-                    if (!previousCommit || !diffOk) {
-
-                        echo 'No previous commit available (or diff failed).'
-                        echo 'Running FULL PIPELINE.'
-
-                        env.BACKEND_CHANGED = 'true'
-                        env.FRONTEND_CHANGED = 'true'
-                        env.DATABASE_CHANGED = 'true'
-                        env.K8S_CHANGED = 'true'
-                        env.SECURITY_CHANGED = 'true'
-                        env.JENKINS_CHANGED = 'true'
+                        echo "No previous commit available. Running full pipeline."
                         env.FULL_PIPELINE = 'true'
-
                     } else {
+                        def changedFiles = sh(
+                            script: "git diff --name-only ${previousCommit} HEAD",
+                            returnStdout: true
+                        ).trim()
 
-                        echo '========================================'
-                        echo 'Changed Files'
-                        echo '========================================'
+                        echo "========================================"
+                        echo "Changed Files"
+                        echo "========================================"
+                        echo changedFiles ?: "No changed files detected."
 
-                        echo changedFiles ?: 'No changed files detected.'
+                        def files = changedFiles ? changedFiles.split("\\n") : []
 
-                        def files = []
-                        for (String line : changedFiles.split('\n')) {
-                            if (line.trim()) {
-                                files.add(line.trim())
-                            }
+                        env.BACKEND_CHANGED = files.any {
+                            it ==~ /^backend\/.*$/
+                        } ? 'true' : 'false'
+
+                        env.FRONTEND_CHANGED = files.any {
+                            it ==~ /^frontend\/.*$/
+                        } ? 'true' : 'false'
+
+                        env.DATABASE_CHANGED = files.any {
+                            it ==~ /^database\/.*$/
+                        } ? 'true' : 'false'
+
+                        env.K8S_CHANGED = files.any {
+                            it ==~ /^k8s\/.*$/
+                        } ? 'true' : 'false'
+
+                        env.JENKINS_CHANGED = files.any {
+                            it == 'Jenkinsfile' || it ==~ /^Jenkinsfile.*$/
+                        } ? 'true' : 'false'
+
+                        env.SECURITY_CHANGED = files.any {
+                            it ==~ /^(sonar-project\.properties|\.gitleaks.*|.*\.github\/.*|.*Dockerfile.*|docker-compose.*)$/
+                        } ? 'true' : 'false'
+
+                        if (
+                            env.JENKINS_CHANGED == 'true' ||
+                            env.SECURITY_CHANGED == 'true'
+                        ) {
+                            env.FULL_PIPELINE = 'true'
                         }
 
-                        def backendChanged = false
-                        def frontendChanged = false
-                        def databaseChanged = false
-                        def k8sChanged = false
-                        def securityChanged = false
-                        def jenkinsChanged = false
-
-                        for (int i = 0; i < files.size(); i++) {
-
-                            def changedPath = files[i].replace('\\', '/')
-
-                            if (changedPath.startsWith('backend/')) {
-                                backendChanged = true
-                            }
-
-                            if (changedPath.startsWith('frontend/')) {
-                                frontendChanged = true
-                            }
-
-                            if (changedPath.startsWith('database/')) {
-                                databaseChanged = true
-                            }
-
-                            if (changedPath.startsWith('k8s/')) {
-                                k8sChanged = true
-                            }
-
-                            if (
-                                changedPath == 'Jenkinsfile' ||
-                                changedPath.startsWith('Jenkinsfile.')
-                            ) {
-                                jenkinsChanged = true
-                            }
-
-                            if (
-                                changedPath == 'sonar-project.properties' ||
-                                changedPath.startsWith('.gitleaks') ||
-                                changedPath.startsWith('.github/') ||
-                                changedPath.contains('Dockerfile') ||
-                                changedPath.startsWith('docker-compose')
-                            ) {
-                                securityChanged = true
-                            }
-
-                            echo "Checked: ${changedPath} -> backend=${backendChanged}, frontend=${frontendChanged}, jenkins=${jenkinsChanged}"
-                        }
-
-                        env.BACKEND_CHANGED  = backendChanged  ? 'true' : 'false'
-                        env.FRONTEND_CHANGED = frontendChanged ? 'true' : 'false'
-                        env.DATABASE_CHANGED = databaseChanged ? 'true' : 'false'
-                        env.K8S_CHANGED      = k8sChanged      ? 'true' : 'false'
-                        env.SECURITY_CHANGED = securityChanged ? 'true' : 'false'
-                        env.JENKINS_CHANGED  = jenkinsChanged  ? 'true' : 'false'
-
-                        env.FULL_PIPELINE =
-                            (jenkinsChanged || securityChanged) ? 'true' : 'false'
-
-                        echo "DEBUG local frontendChanged=${frontendChanged}, env.FRONTEND_CHANGED=${env.FRONTEND_CHANGED}"
+                        echo "========================================"
+                        echo "Change Detection Results"
+                        echo "========================================"
+                        echo "Backend changed:  ${env.BACKEND_CHANGED}"
+                        echo "Frontend changed: ${env.FRONTEND_CHANGED}"
+                        echo "Database changed: ${env.DATABASE_CHANGED}"
+                        echo "K8s changed:      ${env.K8S_CHANGED}"
+                        echo "Security changed: ${env.SECURITY_CHANGED}"
+                        echo "Jenkins changed:  ${env.JENKINS_CHANGED}"
+                        echo "Full pipeline:    ${env.FULL_PIPELINE}"
+                        echo "========================================"
                     }
-
-                    echo '========================================'
-                    echo 'CHANGE DETECTION RESULTS'
-                    echo '========================================'
-                    echo "Backend changed:  ${env.BACKEND_CHANGED}"
-                    echo "Frontend changed: ${env.FRONTEND_CHANGED}"
-                    echo "Database changed: ${env.DATABASE_CHANGED}"
-                    echo "K8s changed:      ${env.K8S_CHANGED}"
-                    echo "Security changed: ${env.SECURITY_CHANGED}"
-                    echo "Jenkins changed:  ${env.JENKINS_CHANGED}"
-                    echo "Full pipeline:    ${env.FULL_PIPELINE}"
-                    echo '========================================'
                 }
             }
         }
-
 
         stage('Environment Check') {
             steps {
@@ -637,7 +552,7 @@ pipeline {
             }
         }
 
-        stage('Push Backend to OCIR') {
+        stage('Push Backend to Docker Hub') {
             when {
                 expression {
                     env.FULL_PIPELINE == 'true' ||
@@ -648,42 +563,42 @@ pipeline {
             steps {
                 withCredentials([
                     usernamePassword(
-                        credentialsId: 'ocir-credentials',
-                        usernameVariable: 'OCIR_USERNAME',
-                        passwordVariable: 'OCIR_TOKEN'
+                        credentialsId: 'dockerhub-credentials',
+                        usernameVariable: 'DOCKERHUB_USERNAME',
+                        passwordVariable: 'DOCKERHUB_TOKEN'
                     )
                 ]) {
                     sh '''
-                        echo "===== OCIR Login ====="
+                        echo "===== Docker Hub Login ====="
 
-                        echo "$OCIR_TOKEN" | docker login "$OCIR_REGISTRY" \
-                            -u "$OCIR_USERNAME" \
+                        echo "$DOCKERHUB_TOKEN" | docker login "docker.io" \
+                            -u "$DOCKERHUB_USERNAME" \
                             --password-stdin
 
                         echo "===== Tagging Backend ====="
 
                         docker tag ${APP_IMAGE}:${APP_VERSION} \
-                            ${OCIR_REPOSITORY}:backend-${APP_VERSION}
+                            docker.io/${DOCKERHUB_REPOSITORY}:${APP_VERSION}
 
                         docker tag ${APP_IMAGE}:latest \
-                            ${OCIR_REPOSITORY}:backend-latest
+                            docker.io/${DOCKERHUB_REPOSITORY}:latest
 
                         echo "===== Pushing Backend Version ====="
 
                         docker push \
-                            ${OCIR_REPOSITORY}:backend-${APP_VERSION}
+                            docker.io/${DOCKERHUB_REPOSITORY}:${APP_VERSION}
 
                         echo "===== Pushing Backend Latest ====="
 
                         docker push \
-                            ${OCIR_REPOSITORY}:backend-latest
+                            docker.io/${DOCKERHUB_REPOSITORY}:latest
 
-                        echo "===== Backend OCIR Push Completed ====="
+                        echo "===== Backend Docker Hub Push Completed ====="
 
                         echo "Backend remote digest information:"
                         docker image inspect \
                             --format='{{json .RepoDigests}}' \
-                            ${OCIR_REPOSITORY}:backend-${APP_VERSION} || true
+                            docker.io/${DOCKERHUB_REPOSITORY}:${APP_VERSION} || true
                     '''
                 }
             }
@@ -702,9 +617,9 @@ pipeline {
                     file(credentialsId: 'cosign-private-key', variable: 'COSIGN_KEY_FILE'),
                     string(credentialsId: 'cosign-key-password', variable: 'COSIGN_PASSWORD'),
                     usernamePassword(
-                        credentialsId: 'ocir-credentials',
-                        usernameVariable: 'OCIR_USERNAME',
-                        passwordVariable: 'OCIR_TOKEN'
+                        credentialsId: 'dockerhub-credentials',
+                        usernameVariable: 'DOCKERHUB_USERNAME',
+                        passwordVariable: 'DOCKERHUB_TOKEN'
                     )
                 ]) {
                     sh '''
@@ -716,10 +631,10 @@ pipeline {
 
                         BACKEND_DIGEST=$(docker image inspect \
                             --format='{{index .RepoDigests 0}}' \
-                            ${OCIR_REPOSITORY}:backend-${APP_VERSION})
+                            docker.io/${DOCKERHUB_REPOSITORY}:${APP_VERSION})
 
                         if [ -z "${BACKEND_DIGEST}" ] || [ "${BACKEND_DIGEST}" = "<no value>" ]; then
-                            echo "ERROR: Could not determine backend OCIR digest."
+                            echo "ERROR: Could not determine backend Docker Hub digest."
                             exit 1
                         fi
 
@@ -740,8 +655,8 @@ pipeline {
                             sign \
                             --yes \
                             --key env://COSIGN_PRIVATE_KEY \
-                            --registry-username "${OCIR_USERNAME}" \
-                            --registry-password "${OCIR_TOKEN}" \
+                            --registry-username "${DOCKERHUB_USERNAME}" \
+                            --registry-password "${DOCKERHUB_TOKEN}" \
                             "${BACKEND_DIGEST}"
 
                         echo "===== Backend Cosign Signing Completed ====="
@@ -762,9 +677,9 @@ pipeline {
                 withCredentials([
                     file(credentialsId: 'cosign-public-key', variable: 'COSIGN_PUBLIC_KEY_FILE'),
                     usernamePassword(
-                        credentialsId: 'ocir-credentials',
-                        usernameVariable: 'OCIR_USERNAME',
-                        passwordVariable: 'OCIR_TOKEN'
+                        credentialsId: 'dockerhub-credentials',
+                        usernameVariable: 'DOCKERHUB_USERNAME',
+                        passwordVariable: 'DOCKERHUB_TOKEN'
                     )
                 ]) {
                     sh '''
@@ -776,10 +691,10 @@ pipeline {
 
                         BACKEND_DIGEST=$(docker image inspect \
                             --format='{{index .RepoDigests 0}}' \
-                            ${OCIR_REPOSITORY}:backend-${APP_VERSION})
+                            docker.io/${DOCKERHUB_REPOSITORY}:${APP_VERSION})
 
                         if [ -z "${BACKEND_DIGEST}" ] || [ "${BACKEND_DIGEST}" = "<no value>" ]; then
-                            echo "ERROR: Could not determine backend OCIR digest."
+                            echo "ERROR: Could not determine backend Docker Hub digest."
                             exit 1
                         fi
 
@@ -794,8 +709,8 @@ pipeline {
                             ${COSIGN_IMAGE} \
                             verify \
                             --key env://COSIGN_PUBLIC_KEY \
-                            --registry-username "${OCIR_USERNAME}" \
-                            --registry-password "${OCIR_TOKEN}" \
+                            --registry-username "${DOCKERHUB_USERNAME}" \
+                            --registry-password "${DOCKERHUB_TOKEN}" \
                             "${BACKEND_DIGEST}"
 
                         echo "===== Backend Cosign Verification Completed ====="
@@ -972,7 +887,7 @@ pipeline {
             }
         }
 
-        stage('Push Frontend to OCIR') {
+        stage('Push Frontend to Docker Hub') {
             when {
                 expression {
                     env.FULL_PIPELINE == 'true' ||
@@ -982,44 +897,44 @@ pipeline {
             steps {
                 withCredentials([
                     usernamePassword(
-                        credentialsId: 'ocir-credentials',
-                        usernameVariable: 'OCIR_USERNAME',
-                        passwordVariable: 'OCIR_TOKEN'
+                        credentialsId: 'dockerhub-credentials',
+                        usernameVariable: 'DOCKERHUB_USERNAME',
+                        passwordVariable: 'DOCKERHUB_TOKEN'
                     )
                 ]) {
                     sh '''
-                        echo "===== OCIR Login ====="
+                        echo "===== Docker Hub Login ====="
 
-                        echo "$OCIR_TOKEN" | docker login "$OCIR_REGISTRY" \
-                            -u "$OCIR_USERNAME" \
+                        echo "$DOCKERHUB_TOKEN" | docker login "docker.io" \
+                            -u "$DOCKERHUB_USERNAME" \
                             --password-stdin
 
                         echo "===== Tagging Frontend ====="
 
                         docker tag ${FRONTEND_IMAGE}:${APP_VERSION} \
-                            ${OCIR_REPOSITORY}:frontend-${APP_VERSION}
+                            docker.io/${DOCKERHUB_FRONTEND_REPOSITORY}:${APP_VERSION}
 
                         docker tag ${FRONTEND_IMAGE}:latest \
-                            ${OCIR_REPOSITORY}:frontend-latest
+                            docker.io/${DOCKERHUB_FRONTEND_REPOSITORY}:latest
 
                         echo "===== Pushing Frontend Version ====="
 
                         docker push \
-                            ${OCIR_REPOSITORY}:frontend-${APP_VERSION}
+                            docker.io/${DOCKERHUB_FRONTEND_REPOSITORY}:${APP_VERSION}
 
                         echo "===== Pushing Frontend Latest ====="
 
                         docker push \
-                            ${OCIR_REPOSITORY}:frontend-latest
+                            docker.io/${DOCKERHUB_FRONTEND_REPOSITORY}:latest
 
-                        echo "===== Frontend OCIR Push Completed ====="
+                        echo "===== Frontend Docker Hub Push Completed ====="
 
                         echo "Frontend remote digest information:"
                         docker image inspect \
                             --format='{{json .RepoDigests}}' \
-                            ${OCIR_REPOSITORY}:frontend-${APP_VERSION} || true
+                            docker.io/${DOCKERHUB_FRONTEND_REPOSITORY}:${APP_VERSION} || true
 
-                        docker logout "$OCIR_REGISTRY"
+                        docker logout "docker.io"
                     '''
                 }
             }
@@ -1037,9 +952,9 @@ pipeline {
                     file(credentialsId: 'cosign-private-key', variable: 'COSIGN_KEY_FILE'),
                     string(credentialsId: 'cosign-key-password', variable: 'COSIGN_PASSWORD'),
                     usernamePassword(
-                        credentialsId: 'ocir-credentials',
-                        usernameVariable: 'OCIR_USERNAME',
-                        passwordVariable: 'OCIR_TOKEN'
+                        credentialsId: 'dockerhub-credentials',
+                        usernameVariable: 'DOCKERHUB_USERNAME',
+                        passwordVariable: 'DOCKERHUB_TOKEN'
                     )
                 ]) {
                     sh '''
@@ -1051,10 +966,10 @@ pipeline {
 
                         FRONTEND_DIGEST=$(docker image inspect \
                             --format='{{index .RepoDigests 0}}' \
-                            ${OCIR_REPOSITORY}:frontend-${APP_VERSION})
+                            docker.io/${DOCKERHUB_FRONTEND_REPOSITORY}:${APP_VERSION})
 
                         if [ -z "${FRONTEND_DIGEST}" ] || [ "${FRONTEND_DIGEST}" = "<no value>" ]; then
-                            echo "ERROR: Could not determine frontend OCIR digest."
+                            echo "ERROR: Could not determine frontend Docker Hub digest."
                             exit 1
                         fi
 
@@ -1075,8 +990,8 @@ pipeline {
                             sign \
                             --yes \
                             --key env://COSIGN_PRIVATE_KEY \
-                            --registry-username "${OCIR_USERNAME}" \
-                            --registry-password "${OCIR_TOKEN}" \
+                            --registry-username "${DOCKERHUB_USERNAME}" \
+                            --registry-password "${DOCKERHUB_TOKEN}" \
                             "${FRONTEND_DIGEST}"
 
                         echo "===== Frontend Cosign Signing Completed ====="
@@ -1096,9 +1011,9 @@ pipeline {
                 withCredentials([
                     file(credentialsId: 'cosign-public-key', variable: 'COSIGN_PUBLIC_KEY_FILE'),
                     usernamePassword(
-                        credentialsId: 'ocir-credentials',
-                        usernameVariable: 'OCIR_USERNAME',
-                        passwordVariable: 'OCIR_TOKEN'
+                        credentialsId: 'dockerhub-credentials',
+                        usernameVariable: 'DOCKERHUB_USERNAME',
+                        passwordVariable: 'DOCKERHUB_TOKEN'
                     )
                 ]) {
                     sh '''
@@ -1110,10 +1025,10 @@ pipeline {
 
                         FRONTEND_DIGEST=$(docker image inspect \
                             --format='{{index .RepoDigests 0}}' \
-                            ${OCIR_REPOSITORY}:frontend-${APP_VERSION})
+                            docker.io/${DOCKERHUB_FRONTEND_REPOSITORY}:${APP_VERSION})
 
                         if [ -z "${FRONTEND_DIGEST}" ] || [ "${FRONTEND_DIGEST}" = "<no value>" ]; then
-                            echo "ERROR: Could not determine frontend OCIR digest."
+                            echo "ERROR: Could not determine frontend Docker Hub digest."
                             exit 1
                         fi
 
@@ -1128,8 +1043,8 @@ pipeline {
                             ${COSIGN_IMAGE} \
                             verify \
                             --key env://COSIGN_PUBLIC_KEY \
-                            --registry-username "${OCIR_USERNAME}" \
-                            --registry-password "${OCIR_TOKEN}" \
+                            --registry-username "${DOCKERHUB_USERNAME}" \
+                            --registry-password "${DOCKERHUB_TOKEN}" \
                             "${FRONTEND_DIGEST}"
 
                         echo "===== Frontend Cosign Verification Completed ====="
@@ -1154,45 +1069,21 @@ pipeline {
                     echo "========================================"
                     echo "SBOM Traceability Metadata"
                     echo "========================================"
-                    echo "Creating traceability only for images built in this pipeline."
+                    echo "Creating traceability after both images are pushed and Cosign-verified."
+
+                    BACKEND_IMAGE_ID=$(docker image inspect \
+                        --format='{{.Id}}' \
+                        ${APP_IMAGE}:${APP_VERSION} 2>/dev/null || true)
+
+                    FRONTEND_IMAGE_ID=$(docker image inspect \
+                        --format='{{.Id}}' \
+                        ${FRONTEND_IMAGE}:${APP_VERSION} 2>/dev/null || true)
 
                     BUILD_TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-                    BACKEND_IMAGE_ID=""
-                    BACKEND_DIGEST=""
-                    FRONTEND_IMAGE_ID=""
-                    FRONTEND_DIGEST=""
-                    BACKEND_PROCESSED=false
-                    FRONTEND_PROCESSED=false
+                    BACKEND_DIGEST=$(docker image inspect                         --format='{{index .RepoDigests 0}}'                         docker.io/${DOCKERHUB_REPOSITORY}:${APP_VERSION})
 
-                    if [ "${FULL_PIPELINE}" = "true" ] || \
-                       [ "${BACKEND_CHANGED}" = "true" ] || \
-                       [ "${DATABASE_CHANGED}" = "true" ]; then
-
-                        BACKEND_PROCESSED=true
-
-                        BACKEND_IMAGE_ID=$(docker image inspect \
-                            --format='{{.Id}}' \
-                            ${APP_IMAGE}:${APP_VERSION} 2>/dev/null || true)
-
-                        BACKEND_DIGEST=$(docker image inspect \
-                            --format='{{index .RepoDigests 0}}' \
-                            ${OCIR_REPOSITORY}:backend-${APP_VERSION} 2>/dev/null || true)
-                    fi
-
-                    if [ "${FULL_PIPELINE}" = "true" ] || \
-                       [ "${FRONTEND_CHANGED}" = "true" ]; then
-
-                        FRONTEND_PROCESSED=true
-
-                        FRONTEND_IMAGE_ID=$(docker image inspect \
-                            --format='{{.Id}}' \
-                            ${FRONTEND_IMAGE}:${APP_VERSION} 2>/dev/null || true)
-
-                        FRONTEND_DIGEST=$(docker image inspect \
-                            --format='{{index .RepoDigests 0}}' \
-                            ${OCIR_REPOSITORY}:frontend-${APP_VERSION} 2>/dev/null || true)
-                    fi
+                    FRONTEND_DIGEST=$(docker image inspect                         --format='{{index .RepoDigests 0}}'                         docker.io/${DOCKERHUB_FRONTEND_REPOSITORY}:${APP_VERSION})
 
                     cat > "sbom/traceability-${APP_VERSION}.json" <<EOF
 {
@@ -1215,20 +1106,16 @@ pipeline {
     "cosign_image": "${COSIGN_IMAGE}"
   },
   "backend": {
-    "processed": ${BACKEND_PROCESSED},
-    "image": "${OCIR_REPOSITORY}:backend-${APP_VERSION}",
+    "image": "docker.io/${DOCKERHUB_REPOSITORY}:${APP_VERSION}",
     "local_image": "${APP_IMAGE}:${APP_VERSION}",
     "image_id": "${BACKEND_IMAGE_ID}",
-    "digest": "${BACKEND_DIGEST}",
     "sbom": "backend-${APP_VERSION}-sbom.json",
     "grype_report": "backend-${APP_VERSION}-grype.json"
   },
   "frontend": {
-    "processed": ${FRONTEND_PROCESSED},
-    "image": "${OCIR_REPOSITORY}:frontend-${APP_VERSION}",
+    "image": "docker.io/${DOCKERHUB_FRONTEND_REPOSITORY}:${APP_VERSION}",
     "local_image": "${FRONTEND_IMAGE}:${APP_VERSION}",
     "image_id": "${FRONTEND_IMAGE_ID}",
-    "digest": "${FRONTEND_DIGEST}",
     "sbom": "frontend-${APP_VERSION}-sbom.json",
     "grype_report": "frontend-${APP_VERSION}-grype.json"
   },
@@ -1248,88 +1135,78 @@ EOF
             }
         }
 
-        stage('Update GitOps Manifests') {
+        stage('Deploy with Docker Compose') {
             when {
                 expression {
                     env.FULL_PIPELINE == 'true' ||
                     env.BACKEND_CHANGED == 'true' ||
                     env.FRONTEND_CHANGED == 'true' ||
                     env.DATABASE_CHANGED == 'true' ||
-                    env.K8S_CHANGED == 'true'
+                    env.SECURITY_CHANGED == 'true'
                 }
             }
             steps {
                 withCredentials([
+                    string(credentialsId: 'auralis-postgres-password', variable: 'POSTGRES_PASSWORD'),
+                    string(credentialsId: 'audius-api-key', variable: 'AUDIUS_API_KEY'),
+                    string(credentialsId: 'audius-bearer-token', variable: 'AUDIUS_BEARER_TOKEN'),
                     usernamePassword(
-                        credentialsId: 'github-gitops',
-                        usernameVariable: 'GIT_USERNAME',
-                        passwordVariable: 'GIT_TOKEN'
+                        credentialsId: 'dockerhub-credentials',
+                        usernameVariable: 'DOCKERHUB_USERNAME',
+                        passwordVariable: 'DOCKERHUB_TOKEN'
                     )
                 ]) {
                     sh '''
                         set -e
+                        echo "===== Docker Compose Deployment ====="
 
-                        echo "===== Updating GitOps Manifests ====="
+                        echo "$DOCKERHUB_TOKEN" | docker login docker.io -u "$DOCKERHUB_USERNAME" --password-stdin
 
-                        echo "Current backend image:"
-                        grep "image:" k8s/backend.yaml
+                        export BACKEND_IMAGE="docker.io/${DOCKERHUB_REPOSITORY}:${APP_VERSION}"
+                        export FRONTEND_IMAGE_FULL="docker.io/${DOCKERHUB_FRONTEND_REPOSITORY}:${APP_VERSION}"
 
-                        echo "Current frontend image:"
-                        grep "image:" k8s/frontend.yaml
+                        umask 077
+                        cat > .auralis-deploy.env <<EOF
+POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+AUDIUS_API_KEY=${AUDIUS_API_KEY}
+AUDIUS_BEARER_TOKEN=${AUDIUS_BEARER_TOKEN}
+BACKEND_IMAGE=${BACKEND_IMAGE}
+FRONTEND_IMAGE=${FRONTEND_IMAGE_FULL}
+EOF
 
-                        # Only update the manifest for an image that was
-                        # actually built and pushed in this pipeline.
-                        if [ "${FULL_PIPELINE}" = "true" ] || \
-                           [ "${BACKEND_CHANGED}" = "true" ] || \
-                           [ "${DATABASE_CHANGED}" = "true" ]; then
+                        docker compose --env-file .auralis-deploy.env -f docker-compose.prod.yml pull
+                        docker compose --env-file .auralis-deploy.env -f docker-compose.prod.yml up -d --remove-orphans
 
-                            echo "Updating backend image to build ${APP_VERSION}"
+                        echo "===== Database Initialization Check ====="
+                        DB_EXISTS=$(docker compose -f docker-compose.prod.yml exec -T postgres \
+                            psql -U auralis -d auralis -tAc "SELECT to_regclass('public.tracks')" | tr -d '[:space:]' || true)
 
-                            sed -i \
-                                "s#image: hyd.ocir.io/axedsxii3ulu/auralis:backend-[^[:space:]]*#image: hyd.ocir.io/axedsxii3ulu/auralis:backend-${APP_VERSION}#" \
-                                k8s/backend.yaml
+                        if [ -z "$DB_EXISTS" ] || [ "$DB_EXISTS" = "null" ]; then
+                            echo "Database schema not found. Applying database/init.sql..."
+                            docker compose -f docker-compose.prod.yml exec -T postgres \
+                                psql -v ON_ERROR_STOP=1 -U auralis -d auralis < database/init.sql
                         else
-                            echo "Backend image unchanged."
+                            echo "Database schema already exists; skipping init.sql."
                         fi
 
-                        if [ "${FULL_PIPELINE}" = "true" ] || \
-                           [ "${FRONTEND_CHANGED}" = "true" ]; then
+                        rm -f .auralis-deploy.env
+                        docker logout docker.io || true
 
-                            echo "Updating frontend image to build ${APP_VERSION}"
+                        docker compose -f docker-compose.prod.yml ps
 
-                            sed -i \
-                                "s#image: hyd.ocir.io/axedsxii3ulu/auralis:frontend-[^[:space:]]*#image: hyd.ocir.io/axedsxii3ulu/auralis:frontend-${APP_VERSION}#" \
-                                k8s/frontend.yaml
-                        else
-                            echo "Frontend image unchanged."
-                        fi
-
-                        echo "Updated backend image:"
-                        grep "image:" k8s/backend.yaml
-
-                        echo "Updated frontend image:"
-                        grep "image:" k8s/frontend.yaml
-
-                        git config user.name "Jenkins"
-                        git config user.email "jenkins@auralis.local"
-
-                        git add k8s/backend.yaml k8s/frontend.yaml
-
-                        if git diff --cached --quiet; then
-                            echo "No GitOps image changes detected."
-                            exit 0
-                        fi
-
-                        git commit \
-                            -m "Update Auralis images to build ${APP_VERSION} [skip ci]"
-
-                        echo "===== Pushing GitOps Changes ====="
-
-                        git push \
-                            "https://${GIT_USERNAME}:${GIT_TOKEN}@github.com/0x1k4rt1k/auralis-web3-music.git" \
-                            HEAD:main
-
-                        echo "===== GitOps Update Completed ====="
+                        for i in $(seq 1 30); do
+                            if docker compose -f docker-compose.prod.yml exec -T backend \
+                                node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" >/dev/null 2>&1; then
+                                echo "Backend health check passed."
+                                break
+                            fi
+                            sleep 2
+                            if [ "$i" -eq 30 ]; then
+                                echo "ERROR: Backend health check failed."
+                                docker compose -f docker-compose.prod.yml logs --tail=100 backend || true
+                                exit 1
+                            fi
+                        done
                     '''
                 }
             }
@@ -1392,6 +1269,7 @@ EOF
 
                     docker run --rm \
                         --user 0:0 \
+                        --add-host=host.docker.internal:host-gateway \
                         -v "${ZAP_DIR}:/zap/wrk:rw" \
                         "${ZAP_IMAGE}" \
                         zap-baseline.py \
@@ -1442,14 +1320,14 @@ EOF
 
                     echo "Creating Auralis API OpenAPI definition..."
 
-                    cat > "${API_SPEC}" <<'EOF'
+                    cat > "${API_SPEC}" <<EOF
 openapi: 3.0.3
 info:
   title: Auralis API
   version: 1.0.0
   description: Auralis API used for CI/CD DAST testing.
 servers:
-  - url: http://129.154.36.20
+  - url: ${DAST_TARGET}
 paths:
   /api/health:
     get:
@@ -1522,6 +1400,7 @@ EOF
 
                     docker run --rm \
                         --user 0:0 \
+                        --add-host=host.docker.internal:host-gateway \
                         -v "${ZAP_DIR}:/zap/wrk:rw" \
                         "${ZAP_IMAGE}" \
                         zap-api-scan.py \
@@ -1577,15 +1456,14 @@ EOF
                 allowEmptyArchive: true,
                 fingerprint: true
             )
-
         }
 
         success {
             echo 'Auralis DevSecOps CI/CD pipeline completed successfully.'
-            echo 'Docker images pushed to OCIR and GitOps manifests updated.'
+            echo 'Docker images pushed to Docker Hub and deployed with Docker Compose.'
             echo 'SBOM traceability metadata archived.'
             echo 'Cosign signatures created and verified for backend and frontend.'
-            echo 'Argo CD will synchronize the new image versions to OKE.'
+            echo 'Kubernetes/Argo CD manifests remain in GitHub as the advanced deployment path.'
         }
 
         failure {
