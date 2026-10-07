@@ -18,8 +18,8 @@ pipeline {
         GITLEAKS_IMAGE = 'zricethezav/gitleaks:latest'
         COSIGN_IMAGE = 'ghcr.io/sigstore/cosign/cosign:latest'
         ZAP_IMAGE = 'ghcr.io/zaproxy/zaproxy:stable'
-        DAST_TARGET = 'http://host.docker.internal:8080'
 
+        DAST_TARGET = 'http://host.docker.internal:8080'
     }
 
     stages {
@@ -49,8 +49,6 @@ pipeline {
             }
         }
 
-
-
         stage('Environment Check') {
             steps {
                 sh '''
@@ -68,17 +66,25 @@ pipeline {
                     echo "Docker version:"
                     docker --version
 
+                    echo "Docker Compose version:"
+                    docker compose version
+
                     echo "Jenkins Build:"
                     echo "${BUILD_NUMBER}"
 
                     echo "Git Commit:"
                     echo "${GIT_COMMIT_SHA}"
+
+                    echo "Backend Docker Hub Repository:"
+                    echo "${DOCKERHUB_BACKEND_REPOSITORY}"
+
+                    echo "Frontend Docker Hub Repository:"
+                    echo "${DOCKERHUB_FRONTEND_REPOSITORY}"
                 '''
             }
         }
 
         stage('Install Dependencies') {
-
             steps {
                 dir('backend') {
                     sh 'npm ci'
@@ -87,7 +93,6 @@ pipeline {
         }
 
         stage('Unit Tests + Coverage') {
-
             steps {
                 dir('backend') {
                     sh '''
@@ -115,7 +120,6 @@ pipeline {
         }
 
         stage('ESLint') {
-
             steps {
                 dir('backend') {
                     sh 'npm run lint'
@@ -124,7 +128,6 @@ pipeline {
         }
 
         stage('SonarQube SAST') {
-
             steps {
                 withSonarQubeEnv('SonarQube') {
                     withCredentials([
@@ -156,7 +159,6 @@ pipeline {
         }
 
         stage('SonarQube Quality Gate') {
-
             steps {
                 timeout(time: 5, unit: 'MINUTES') {
                     waitForQualityGate abortPipeline: false
@@ -179,6 +181,7 @@ pipeline {
 
                     mkdir -p "${REPORT_DIR}"
                     rm -f "${REPORT_FILE}"
+
                     docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
 
                     docker create \
@@ -220,7 +223,6 @@ pipeline {
         }
 
         stage('OWASP Dependency-Check') {
-
             steps {
                 sh 'mkdir -p dependency-check-report'
 
@@ -239,7 +241,6 @@ pipeline {
         }
 
         stage('Dependency Security Gate') {
-
             steps {
                 dependencyCheckPublisher(
                     pattern: 'dependency-check-report/dependency-check-report.xml'
@@ -248,9 +249,10 @@ pipeline {
         }
 
         stage('Backend Docker Build') {
-
             steps {
                 sh '''
+                    set -e
+
                     echo "===== Backend Docker Build ====="
 
                     docker build \
@@ -262,14 +264,16 @@ pipeline {
         }
 
         stage('Backend Docker Image Check') {
-
             steps {
                 sh '''
+                    set -e
+
                     echo "===== Backend Docker Image Check ====="
 
                     docker images ${APP_IMAGE}
 
                     echo "Backend Image ID:"
+
                     docker image inspect \
                         --format='{{.Id}}' \
                         ${APP_IMAGE}:${APP_VERSION}
@@ -278,7 +282,6 @@ pipeline {
         }
 
         stage('Backend Trivy Scan') {
-
             steps {
                 sh '''
                     echo "===== Backend Trivy Security Scan ====="
@@ -306,7 +309,6 @@ pipeline {
         }
 
         stage('Backend SBOM + Grype') {
-
             steps {
                 sh '''
                     set -e
@@ -411,7 +413,6 @@ pipeline {
         }
 
         stage('Push Backend to Docker Hub') {
-
             steps {
                 withCredentials([
                     usernamePassword(
@@ -421,47 +422,60 @@ pipeline {
                     )
                 ]) {
                     sh '''
+                        set -e
+
                         echo "===== Docker Hub Login ====="
 
-                        echo "$DOCKERHUB_TOKEN" | docker login "docker.io" \
+                        echo "$DOCKERHUB_TOKEN" | docker login docker.io \
                             -u "$DOCKERHUB_USERNAME" \
                             --password-stdin
 
+                        echo "===== Backend Repository ====="
+                        echo "${DOCKERHUB_BACKEND_REPOSITORY}"
+
                         echo "===== Tagging Backend ====="
 
-                        docker tag ${APP_IMAGE}:${APP_VERSION} \
-                            docker.io/${DOCKERHUB_REPOSITORY}:${APP_VERSION}
+                        docker tag \
+                            ${APP_IMAGE}:${APP_VERSION} \
+                            docker.io/${DOCKERHUB_BACKEND_REPOSITORY}:${APP_VERSION}
 
-                        docker tag ${APP_IMAGE}:latest \
-                            docker.io/${DOCKERHUB_REPOSITORY}:latest
+                        docker tag \
+                            ${APP_IMAGE}:latest \
+                            docker.io/${DOCKERHUB_BACKEND_REPOSITORY}:latest
 
                         echo "===== Pushing Backend Version ====="
 
                         docker push \
-                            docker.io/${DOCKERHUB_REPOSITORY}:${APP_VERSION}
+                            docker.io/${DOCKERHUB_BACKEND_REPOSITORY}:${APP_VERSION}
 
                         echo "===== Pushing Backend Latest ====="
 
                         docker push \
-                            docker.io/${DOCKERHUB_REPOSITORY}:latest
+                            docker.io/${DOCKERHUB_BACKEND_REPOSITORY}:latest
 
                         echo "===== Backend Docker Hub Push Completed ====="
 
                         echo "Backend remote digest information:"
+
                         docker image inspect \
                             --format='{{json .RepoDigests}}' \
-                            docker.io/${DOCKERHUB_REPOSITORY}:${APP_VERSION} || true
+                            docker.io/${DOCKERHUB_BACKEND_REPOSITORY}:${APP_VERSION} || true
                     '''
                 }
             }
         }
 
         stage('Cosign Sign Backend') {
-
             steps {
                 withCredentials([
-                    file(credentialsId: 'cosign-private-key', variable: 'COSIGN_KEY_FILE'),
-                    string(credentialsId: 'cosign-key-password', variable: 'COSIGN_PASSWORD'),
+                    file(
+                        credentialsId: 'cosign-private-key',
+                        variable: 'COSIGN_KEY_FILE'
+                    ),
+                    string(
+                        credentialsId: 'cosign-key-password',
+                        variable: 'COSIGN_PASSWORD'
+                    ),
                     usernamePassword(
                         credentialsId: 'dockerhub-credentials',
                         usernameVariable: 'DOCKERHUB_USERNAME',
@@ -477,7 +491,7 @@ pipeline {
 
                         BACKEND_DIGEST=$(docker image inspect \
                             --format='{{index .RepoDigests 0}}' \
-                            docker.io/${DOCKERHUB_REPOSITORY}:${APP_VERSION})
+                            docker.io/${DOCKERHUB_BACKEND_REPOSITORY}:${APP_VERSION})
 
                         if [ -z "${BACKEND_DIGEST}" ] || [ "${BACKEND_DIGEST}" = "<no value>" ]; then
                             echo "ERROR: Could not determine backend Docker Hub digest."
@@ -512,10 +526,12 @@ pipeline {
         }
 
         stage('Cosign Verify Backend') {
-
             steps {
                 withCredentials([
-                    file(credentialsId: 'cosign-public-key', variable: 'COSIGN_PUBLIC_KEY_FILE'),
+                    file(
+                        credentialsId: 'cosign-public-key',
+                        variable: 'COSIGN_PUBLIC_KEY_FILE'
+                    ),
                     usernamePassword(
                         credentialsId: 'dockerhub-credentials',
                         usernameVariable: 'DOCKERHUB_USERNAME',
@@ -531,7 +547,7 @@ pipeline {
 
                         BACKEND_DIGEST=$(docker image inspect \
                             --format='{{index .RepoDigests 0}}' \
-                            docker.io/${DOCKERHUB_REPOSITORY}:${APP_VERSION})
+                            docker.io/${DOCKERHUB_BACKEND_REPOSITORY}:${APP_VERSION})
 
                         if [ -z "${BACKEND_DIGEST}" ] || [ "${BACKEND_DIGEST}" = "<no value>" ]; then
                             echo "ERROR: Could not determine backend Docker Hub digest."
@@ -560,10 +576,10 @@ pipeline {
         }
 
         stage('Frontend Docker Build') {
-
             steps {
                 sh '''
                     set -e
+
                     echo "===== Frontend Docker Build ====="
 
                     docker build \
@@ -572,26 +588,30 @@ pipeline {
                         ./frontend
 
                     echo "Frontend image built:"
-                    docker image inspect ${FRONTEND_IMAGE}:${APP_VERSION} \
+
+                    docker image inspect \
+                        ${FRONTEND_IMAGE}:${APP_VERSION} \
                         --format='{{.Id}}'
                 '''
             }
         }
 
         stage('Frontend Docker Image Check') {
-
             steps {
                 sh '''
                     set -e
+
                     echo "===== Frontend Docker Image Check ====="
-                    docker image inspect ${FRONTEND_IMAGE}:${APP_VERSION}
+
+                    docker image inspect \
+                        ${FRONTEND_IMAGE}:${APP_VERSION}
+
                     docker images ${FRONTEND_IMAGE}
                 '''
             }
         }
 
         stage('Frontend Trivy Scan') {
-
             steps {
                 sh '''
                     echo "===== Frontend Trivy Security Scan ====="
@@ -608,7 +628,6 @@ pipeline {
         }
 
         stage('Frontend SBOM + Grype') {
-
             steps {
                 sh '''
                     set -e
@@ -627,7 +646,9 @@ pipeline {
                     docker volume create "${SBOM_VOLUME}" >/dev/null
 
                     echo "Checking frontend image..."
-                    docker image inspect "${FRONTEND_IMAGE}:${APP_VERSION}" >/dev/null
+
+                    docker image inspect \
+                        "${FRONTEND_IMAGE}:${APP_VERSION}" >/dev/null
 
                     echo "Running Syft ${SYFT_VERSION}..."
 
@@ -708,7 +729,6 @@ pipeline {
         }
 
         stage('Push Frontend to Docker Hub') {
-
             steps {
                 withCredentials([
                     usernamePassword(
@@ -718,18 +738,25 @@ pipeline {
                     )
                 ]) {
                     sh '''
+                        set -e
+
                         echo "===== Docker Hub Login ====="
 
-                        echo "$DOCKERHUB_TOKEN" | docker login "docker.io" \
+                        echo "$DOCKERHUB_TOKEN" | docker login docker.io \
                             -u "$DOCKERHUB_USERNAME" \
                             --password-stdin
 
+                        echo "===== Frontend Repository ====="
+                        echo "${DOCKERHUB_FRONTEND_REPOSITORY}"
+
                         echo "===== Tagging Frontend ====="
 
-                        docker tag ${FRONTEND_IMAGE}:${APP_VERSION} \
+                        docker tag \
+                            ${FRONTEND_IMAGE}:${APP_VERSION} \
                             docker.io/${DOCKERHUB_FRONTEND_REPOSITORY}:${APP_VERSION}
 
-                        docker tag ${FRONTEND_IMAGE}:latest \
+                        docker tag \
+                            ${FRONTEND_IMAGE}:latest \
                             docker.io/${DOCKERHUB_FRONTEND_REPOSITORY}:latest
 
                         echo "===== Pushing Frontend Version ====="
@@ -745,22 +772,28 @@ pipeline {
                         echo "===== Frontend Docker Hub Push Completed ====="
 
                         echo "Frontend remote digest information:"
+
                         docker image inspect \
                             --format='{{json .RepoDigests}}' \
                             docker.io/${DOCKERHUB_FRONTEND_REPOSITORY}:${APP_VERSION} || true
 
-                        docker logout "docker.io"
+                        docker logout docker.io
                     '''
                 }
             }
         }
 
         stage('Cosign Sign Frontend') {
-
             steps {
                 withCredentials([
-                    file(credentialsId: 'cosign-private-key', variable: 'COSIGN_KEY_FILE'),
-                    string(credentialsId: 'cosign-key-password', variable: 'COSIGN_PASSWORD'),
+                    file(
+                        credentialsId: 'cosign-private-key',
+                        variable: 'COSIGN_KEY_FILE'
+                    ),
+                    string(
+                        credentialsId: 'cosign-key-password',
+                        variable: 'COSIGN_PASSWORD'
+                    ),
                     usernamePassword(
                         credentialsId: 'dockerhub-credentials',
                         usernameVariable: 'DOCKERHUB_USERNAME',
@@ -811,10 +844,12 @@ pipeline {
         }
 
         stage('Cosign Verify Frontend') {
-
             steps {
                 withCredentials([
-                    file(credentialsId: 'cosign-public-key', variable: 'COSIGN_PUBLIC_KEY_FILE'),
+                    file(
+                        credentialsId: 'cosign-public-key',
+                        variable: 'COSIGN_PUBLIC_KEY_FILE'
+                    ),
                     usernamePassword(
                         credentialsId: 'dockerhub-credentials',
                         usernameVariable: 'DOCKERHUB_USERNAME',
@@ -859,7 +894,6 @@ pipeline {
         }
 
         stage('Create SBOM Traceability Metadata') {
-
             steps {
                 sh '''
                     set -e
@@ -867,7 +901,6 @@ pipeline {
                     echo "========================================"
                     echo "SBOM Traceability Metadata"
                     echo "========================================"
-                    echo "Creating traceability after both images are pushed and Cosign-verified."
 
                     BACKEND_IMAGE_ID=$(docker image inspect \
                         --format='{{.Id}}' \
@@ -879,9 +912,13 @@ pipeline {
 
                     BUILD_TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-                    BACKEND_DIGEST=$(docker image inspect                         --format='{{index .RepoDigests 0}}'                         docker.io/${DOCKERHUB_REPOSITORY}:${APP_VERSION})
+                    BACKEND_DIGEST=$(docker image inspect \
+                        --format='{{index .RepoDigests 0}}' \
+                        docker.io/${DOCKERHUB_BACKEND_REPOSITORY}:${APP_VERSION})
 
-                    FRONTEND_DIGEST=$(docker image inspect                         --format='{{index .RepoDigests 0}}'                         docker.io/${DOCKERHUB_FRONTEND_REPOSITORY}:${APP_VERSION})
+                    FRONTEND_DIGEST=$(docker image inspect \
+                        --format='{{index .RepoDigests 0}}' \
+                        docker.io/${DOCKERHUB_FRONTEND_REPOSITORY}:${APP_VERSION})
 
                     cat > "sbom/traceability-${APP_VERSION}.json" <<EOF
 {
@@ -904,7 +941,7 @@ pipeline {
     "cosign_image": "${COSIGN_IMAGE}"
   },
   "backend": {
-    "image": "docker.io/${DOCKERHUB_REPOSITORY}:${APP_VERSION}",
+    "image": "docker.io/${DOCKERHUB_BACKEND_REPOSITORY}:${APP_VERSION}",
     "local_image": "${APP_IMAGE}:${APP_VERSION}",
     "image_id": "${BACKEND_IMAGE_ID}",
     "sbom": "backend-${APP_VERSION}-sbom.json",
@@ -934,40 +971,47 @@ EOF
         }
 
         stage('Deploy with Docker Compose') {
-    steps {
-        withCredentials([
-            usernamePassword(
-                credentialsId: 'dockerhub-credentials',
-                usernameVariable: 'DOCKERHUB_USERNAME',
-                passwordVariable: 'DOCKERHUB_PASSWORD'
-            ),
-            string(
-                credentialsId: 'auralis-postgres-password',
-                variable: 'POSTGRES_PASSWORD'
-            ),
-            string(
-                credentialsId: 'audius-api-key',
-                variable: 'AUDIUS_API_KEY'
-            ),
-            string(
-                credentialsId: 'audius-bearer-token',
-                variable: 'AUDIUS_BEARER_TOKEN'
-            )
-        ]) {
-            sh '''
-                set -e
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'dockerhub-credentials',
+                        usernameVariable: 'DOCKERHUB_USERNAME',
+                        passwordVariable: 'DOCKERHUB_PASSWORD'
+                    ),
+                    string(
+                        credentialsId: 'auralis-postgres-password',
+                        variable: 'POSTGRES_PASSWORD'
+                    ),
+                    string(
+                        credentialsId: 'audius-api-key',
+                        variable: 'AUDIUS_API_KEY'
+                    ),
+                    string(
+                        credentialsId: 'audius-bearer-token',
+                        variable: 'AUDIUS_BEARER_TOKEN'
+                    )
+                ]) {
+                    sh '''
+                        set -e
 
-                echo "$DOCKERHUB_PASSWORD" | docker login docker.io \
-                    -u "$DOCKERHUB_USERNAME" \
-                    --password-stdin
+                        echo "========================================"
+                        echo "Docker Compose Deployment"
+                        echo "========================================"
 
-                export BACKEND_IMAGE="docker.io/${DOCKERHUB_BACKEND_REPOSITORY}:${APP_VERSION}"
-                export FRONTEND_IMAGE="docker.io/${DOCKERHUB_FRONTEND_REPOSITORY}:${APP_VERSION}"
+                        echo "$DOCKERHUB_PASSWORD" | docker login docker.io \
+                            -u "$DOCKERHUB_USERNAME" \
+                            --password-stdin
 
-                echo "Backend image: ${BACKEND_IMAGE}"
-                echo "Frontend image: ${FRONTEND_IMAGE}"
+                        export BACKEND_IMAGE="docker.io/${DOCKERHUB_BACKEND_REPOSITORY}:${APP_VERSION}"
+                        export FRONTEND_IMAGE="docker.io/${DOCKERHUB_FRONTEND_REPOSITORY}:${APP_VERSION}"
 
-                cat > .auralis-deploy.env <<EOF
+                        echo "Backend image:"
+                        echo "${BACKEND_IMAGE}"
+
+                        echo "Frontend image:"
+                        echo "${FRONTEND_IMAGE}"
+
+                        cat > .auralis-deploy.env <<EOF
 POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
 AUDIUS_API_KEY=${AUDIUS_API_KEY}
 AUDIUS_BEARER_TOKEN=${AUDIUS_BEARER_TOKEN}
@@ -975,46 +1019,88 @@ BACKEND_IMAGE=${BACKEND_IMAGE}
 FRONTEND_IMAGE=${FRONTEND_IMAGE}
 EOF
 
-                echo "Verifying Compose image configuration..."
+                        chmod 600 .auralis-deploy.env
 
-                grep -E '^(BACKEND_IMAGE|FRONTEND_IMAGE)=' .auralis-deploy.env
+                        echo "===== Compose Image Variables ====="
 
-                docker compose \
-                    --env-file .auralis-deploy.env \
-                    -f docker-compose.prod.yml \
-                    config
+                        grep -E '^(BACKEND_IMAGE|FRONTEND_IMAGE)=' \
+                            .auralis-deploy.env
 
-                echo "Pulling production images..."
+                        echo "===== Docker Compose Configuration ====="
 
-                docker compose \
-                    --env-file .auralis-deploy.env \
-                    -f docker-compose.prod.yml \
-                    pull
+                        docker compose \
+                            --env-file .auralis-deploy.env \
+                            -f docker-compose.prod.yml \
+                            config
 
-                echo "Starting Auralis..."
+                        echo "===== Pulling Production Images ====="
 
-                docker compose \
-                    --env-file .auralis-deploy.env \
-                    -f docker-compose.prod.yml \
-                    up -d
+                        docker compose \
+                            --env-file .auralis-deploy.env \
+                            -f docker-compose.prod.yml \
+                            pull
 
-                echo "Deployment status..."
+                        echo "===== Starting Auralis ====="
 
-                docker compose \
-                    --env-file .auralis-deploy.env \
-                    -f docker-compose.prod.yml \
-                    ps
+                        docker compose \
+                            --env-file .auralis-deploy.env \
+                            -f docker-compose.prod.yml \
+                            up -d
 
-                echo "Cleaning deployment environment file..."
+                        echo "===== Deployment Status ====="
 
-                rm -f .auralis-deploy.env
-            '''
+                        docker compose \
+                            --env-file .auralis-deploy.env \
+                            -f docker-compose.prod.yml \
+                            ps
+
+                        echo "===== Backend Health Check ====="
+
+                        READY=0
+
+                        for i in $(seq 1 30); do
+                            if docker compose \
+                                --env-file .auralis-deploy.env \
+                                -f docker-compose.prod.yml \
+                                exec -T backend \
+                                node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+                            then
+                                echo "Backend is healthy."
+                                READY=1
+                                break
+                            fi
+
+                            echo "Backend not ready yet. Attempt ${i}/30"
+                            sleep 5
+                        done
+
+                        if [ "${READY}" -ne 1 ]; then
+                            echo "ERROR: Backend did not become healthy."
+                            docker compose \
+                                --env-file .auralis-deploy.env \
+                                -f docker-compose.prod.yml \
+                                logs --tail=100 backend
+                            exit 1
+                        fi
+
+                        echo "===== Auralis Deployment Successful ====="
+
+                        docker compose \
+                            --env-file .auralis-deploy.env \
+                            -f docker-compose.prod.yml \
+                            ps
+
+                        echo "Cleaning deployment environment file..."
+
+                        rm -f .auralis-deploy.env
+
+                        docker logout docker.io
+                    '''
+                }
+            }
         }
-    }
-}
 
         stage('DAST - OWASP ZAP Baseline') {
-
             steps {
                 sh '''
                     set -e
@@ -1022,16 +1108,13 @@ EOF
                     echo "========================================"
                     echo "OWASP ZAP DAST Baseline Scan"
                     echo "========================================"
+
                     echo "Target: ${DAST_TARGET}"
-                    echo "========================================"
 
                     ZAP_DIR="${WORKSPACE}/zap-reports"
 
                     rm -rf "${ZAP_DIR}"
                     mkdir -p "${ZAP_DIR}"
-
-                    # The ZAP container must be able to write reports
-                    # into the Jenkins workspace bind mount.
                     chmod 777 "${ZAP_DIR}"
 
                     echo "Waiting for Auralis application to respond..."
@@ -1088,7 +1171,6 @@ EOF
         }
 
         stage('DAST - OWASP ZAP API Scan') {
-
             steps {
                 sh '''
                     set -e
@@ -1111,34 +1193,42 @@ info:
   title: Auralis API
   version: 1.0.0
   description: Auralis API used for CI/CD DAST testing.
+
 servers:
   - url: ${DAST_TARGET}
+
 paths:
+
   /api/health:
     get:
       responses:
         '200':
           description: Health response
+
   /api/overview:
     get:
       responses:
         '200':
           description: Overview response
+
   /api/tracks:
     get:
       responses:
         '200':
           description: Tracks response
+
   /api/artists:
     get:
       responses:
         '200':
           description: Artists response
+
   /api/playlists:
     get:
       responses:
         '200':
           description: Playlists response
+
   /api/tracks/{id}/play:
     post:
       parameters:
@@ -1155,6 +1245,7 @@ paths:
           description: Invalid request
         '404':
           description: Track not found
+
   /api/tracks/{id}/stream:
     get:
       parameters:
@@ -1171,6 +1262,7 @@ paths:
           description: Redirect to audio storage
         '404':
           description: Track not found
+
   /metrics:
     get:
       responses:
@@ -1210,7 +1302,6 @@ EOF
     }
 
     post {
-
         always {
 
             archiveArtifacts(
