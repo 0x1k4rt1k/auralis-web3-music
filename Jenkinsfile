@@ -10,7 +10,7 @@ pipeline {
         FRONTEND_IMAGE = 'auralis-frontend'
         APP_VERSION = "${BUILD_NUMBER}"
 
-        DOCKERHUB_REPOSITORY = '0x1k4rt1k/auralis-backend'
+        DOCKERHUB_BACKEND_REPOSITORY = '0x1k4rt1k/auralis-backend'
         DOCKERHUB_FRONTEND_REPOSITORY = '0x1k4rt1k/auralis-frontend'
 
         SYFT_VERSION = 'v1.52.0'
@@ -934,73 +934,84 @@ EOF
         }
 
         stage('Deploy with Docker Compose') {
+    steps {
+        withCredentials([
+            usernamePassword(
+                credentialsId: 'dockerhub-credentials',
+                usernameVariable: 'DOCKERHUB_USERNAME',
+                passwordVariable: 'DOCKERHUB_PASSWORD'
+            ),
+            string(
+                credentialsId: 'auralis-postgres-password',
+                variable: 'POSTGRES_PASSWORD'
+            ),
+            string(
+                credentialsId: 'audius-api-key',
+                variable: 'AUDIUS_API_KEY'
+            ),
+            string(
+                credentialsId: 'audius-bearer-token',
+                variable: 'AUDIUS_BEARER_TOKEN'
+            )
+        ]) {
+            sh '''
+                set -e
 
-            steps {
-                withCredentials([
-                    string(credentialsId: 'auralis-postgres-password', variable: 'POSTGRES_PASSWORD'),
-                    string(credentialsId: 'audius-api-key', variable: 'AUDIUS_API_KEY'),
-                    string(credentialsId: 'audius-bearer-token', variable: 'AUDIUS_BEARER_TOKEN'),
-                    usernamePassword(
-                        credentialsId: 'dockerhub-credentials',
-                        usernameVariable: 'DOCKERHUB_USERNAME',
-                        passwordVariable: 'DOCKERHUB_TOKEN'
-                    )
-                ]) {
-                    sh '''
-                        set -e
-                        echo "===== Docker Compose Deployment ====="
+                echo "$DOCKERHUB_PASSWORD" | docker login docker.io \
+                    -u "$DOCKERHUB_USERNAME" \
+                    --password-stdin
 
-                        echo "$DOCKERHUB_TOKEN" | docker login docker.io -u "$DOCKERHUB_USERNAME" --password-stdin
+                export BACKEND_IMAGE="docker.io/${DOCKERHUB_BACKEND_REPOSITORY}:${APP_VERSION}"
+                export FRONTEND_IMAGE="docker.io/${DOCKERHUB_FRONTEND_REPOSITORY}:${APP_VERSION}"
 
-                        export BACKEND_IMAGE="docker.io/${DOCKERHUB_REPOSITORY}:${APP_VERSION}"
-                        export FRONTEND_IMAGE_FULL="docker.io/${DOCKERHUB_FRONTEND_REPOSITORY}:${APP_VERSION}"
+                echo "Backend image: ${BACKEND_IMAGE}"
+                echo "Frontend image: ${FRONTEND_IMAGE}"
 
-                        umask 077
-                        cat > .auralis-deploy.env <<EOF
+                cat > .auralis-deploy.env <<EOF
 POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
 AUDIUS_API_KEY=${AUDIUS_API_KEY}
 AUDIUS_BEARER_TOKEN=${AUDIUS_BEARER_TOKEN}
 BACKEND_IMAGE=${BACKEND_IMAGE}
-FRONTEND_IMAGE=${FRONTEND_IMAGE_FULL}
+FRONTEND_IMAGE=${FRONTEND_IMAGE}
 EOF
 
-                        docker compose --env-file .auralis-deploy.env -f docker-compose.prod.yml pull
-                        docker compose --env-file .auralis-deploy.env -f docker-compose.prod.yml up -d --remove-orphans
+                echo "Verifying Compose image configuration..."
 
-                        echo "===== Database Initialization Check ====="
-                        DB_EXISTS=$(docker compose -f docker-compose.prod.yml exec -T postgres \
-                            psql -U auralis -d auralis -tAc "SELECT to_regclass('public.tracks')" | tr -d '[:space:]' || true)
+                grep -E '^(BACKEND_IMAGE|FRONTEND_IMAGE)=' .auralis-deploy.env
 
-                        if [ -z "$DB_EXISTS" ] || [ "$DB_EXISTS" = "null" ]; then
-                            echo "Database schema not found. Applying database/init.sql..."
-                            docker compose -f docker-compose.prod.yml exec -T postgres \
-                                psql -v ON_ERROR_STOP=1 -U auralis -d auralis < database/init.sql
-                        else
-                            echo "Database schema already exists; skipping init.sql."
-                        fi
+                docker compose \
+                    --env-file .auralis-deploy.env \
+                    -f docker-compose.prod.yml \
+                    config
 
-                        rm -f .auralis-deploy.env
-                        docker logout docker.io || true
+                echo "Pulling production images..."
 
-                        docker compose -f docker-compose.prod.yml ps
+                docker compose \
+                    --env-file .auralis-deploy.env \
+                    -f docker-compose.prod.yml \
+                    pull
 
-                        for i in $(seq 1 30); do
-                            if docker compose -f docker-compose.prod.yml exec -T backend \
-                                node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" >/dev/null 2>&1; then
-                                echo "Backend health check passed."
-                                break
-                            fi
-                            sleep 2
-                            if [ "$i" -eq 30 ]; then
-                                echo "ERROR: Backend health check failed."
-                                docker compose -f docker-compose.prod.yml logs --tail=100 backend || true
-                                exit 1
-                            fi
-                        done
-                    '''
-                }
-            }
+                echo "Starting Auralis..."
+
+                docker compose \
+                    --env-file .auralis-deploy.env \
+                    -f docker-compose.prod.yml \
+                    up -d
+
+                echo "Deployment status..."
+
+                docker compose \
+                    --env-file .auralis-deploy.env \
+                    -f docker-compose.prod.yml \
+                    ps
+
+                echo "Cleaning deployment environment file..."
+
+                rm -f .auralis-deploy.env
+            '''
         }
+    }
+}
 
         stage('DAST - OWASP ZAP Baseline') {
 
