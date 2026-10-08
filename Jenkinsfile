@@ -1147,6 +1147,7 @@ EOF
                     docker run --rm \
                         --network auralis-devsecops_auralis-public \
                         --user 0:0 \
+                        -v "${ZAP_DIR}:/zap/wrk:rw" \
                         -v "${ZAP_OUTPUT}:/zap/output:rw" \
                         "${ZAP_IMAGE}" \
                         zap-baseline.py \
@@ -1289,7 +1290,7 @@ EOF
                     docker run --rm \
                         --network auralis-devsecops_auralis-public \
                         --user 0:0 \
-                        -v "${ZAP_DIR}:/zap/wrk:ro" \
+                        -v "${ZAP_DIR}:/zap/wrk:rw" \
                         -v "${ZAP_API_OUTPUT}:/zap/output:rw" \
                         "${ZAP_IMAGE}" \
                         zap-api-scan.py \
