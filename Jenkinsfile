@@ -19,7 +19,7 @@ pipeline {
         COSIGN_IMAGE = 'ghcr.io/sigstore/cosign/cosign:latest'
         ZAP_IMAGE = 'ghcr.io/zaproxy/zaproxy:stable'
 
-        DAST_TARGET = 'http://host.docker.internal:8080'
+        DAST_TARGET = 'http://frontend:8080'
     }
 
     stages {
@@ -1144,8 +1144,8 @@ EOF
                     echo "Starting OWASP ZAP baseline scan..."
 
                     docker run --rm \
+                        --network auralis-devsecops_auralis-public \
                         --user 0:0 \
-                        --add-host=host.docker.internal:host-gateway \
                         -v "${ZAP_DIR}:/zap/wrk:rw" \
                         "${ZAP_IMAGE}" \
                         zap-baseline.py \
@@ -1276,8 +1276,8 @@ EOF
                     echo "Starting OWASP ZAP API scan..."
 
                     docker run --rm \
+                        --network auralis-devsecops_auralis-public \
                         --user 0:0 \
-                        --add-host=host.docker.internal:host-gateway \
                         -v "${ZAP_DIR}:/zap/wrk:rw" \
                         "${ZAP_IMAGE}" \
                         zap-api-scan.py \
