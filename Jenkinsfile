@@ -1112,10 +1112,11 @@ EOF
                     echo "Target: ${DAST_TARGET}"
 
                     ZAP_DIR="${WORKSPACE}/zap-reports"
+                    ZAP_OUTPUT="${ZAP_DIR}/output"
 
                     rm -rf "${ZAP_DIR}"
-                    mkdir -p "${ZAP_DIR}"
-                    chmod 777 "${ZAP_DIR}"
+                    mkdir -p "${ZAP_OUTPUT}"
+                    chmod 777 "${ZAP_DIR}" "${ZAP_OUTPUT}"
 
                     echo "Waiting for Auralis application to respond..."
 
@@ -1146,17 +1147,26 @@ EOF
                     docker run --rm \
                         --network auralis-devsecops_auralis-public \
                         --user 0:0 \
-                        -v "${ZAP_DIR}:/zap/wrk:rw" \
+                        -v "${ZAP_OUTPUT}:/zap/output:rw" \
                         "${ZAP_IMAGE}" \
                         zap-baseline.py \
                         -t "${DAST_TARGET}" \
-                        -r auralis-zap-report.html \
-                        -J auralis-zap-report.json \
+                        -r /zap/output/auralis-zap-report.html \
+                        -J /zap/output/auralis-zap-report.json \
                         -I
 
                     echo "========================================"
                     echo "OWASP ZAP Scan Completed"
                     echo "========================================"
+
+                    echo "ZAP container output directory:"
+                    ls -lah "${ZAP_OUTPUT}"
+
+                    test -s "${ZAP_OUTPUT}/auralis-zap-report.html"
+                    test -s "${ZAP_OUTPUT}/auralis-zap-report.json"
+
+                    cp "${ZAP_OUTPUT}/auralis-zap-report.html" "${ZAP_DIR}/"
+                    cp "${ZAP_OUTPUT}/auralis-zap-report.json" "${ZAP_DIR}/"
 
                     echo "Generated ZAP reports:"
                     ls -lah "${ZAP_DIR}"
@@ -1181,9 +1191,10 @@ EOF
 
                     ZAP_DIR="${WORKSPACE}/zap-reports"
                     API_SPEC="${ZAP_DIR}/auralis-api.yaml"
+                    ZAP_API_OUTPUT="${ZAP_DIR}/api-output"
 
-                    mkdir -p "${ZAP_DIR}"
-                    chmod 777 "${ZAP_DIR}"
+                    mkdir -p "${ZAP_DIR}" "${ZAP_API_OUTPUT}"
+                    chmod 777 "${ZAP_DIR}" "${ZAP_API_OUTPUT}"
 
                     echo "Creating Auralis API OpenAPI definition..."
 
@@ -1278,24 +1289,34 @@ EOF
                     docker run --rm \
                         --network auralis-devsecops_auralis-public \
                         --user 0:0 \
-                        -v "${ZAP_DIR}:/zap/wrk:rw" \
+                        -v "${ZAP_DIR}:/zap/wrk:ro" \
+                        -v "${ZAP_API_OUTPUT}:/zap/output:rw" \
                         "${ZAP_IMAGE}" \
                         zap-api-scan.py \
                         -t /zap/wrk/auralis-api.yaml \
                         -f openapi \
-                        -r auralis-api-zap-report.html \
-                        -J auralis-api-zap-report.json \
+                        -r /zap/output/auralis-api-zap-report.html \
+                        -J /zap/output/auralis-api-zap-report.json \
                         -I
 
                     echo "========================================"
                     echo "OWASP ZAP API Scan Completed"
                     echo "========================================"
 
-                    test -s "${ZAP_DIR}/auralis-api-zap-report.html"
-                    test -s "${ZAP_DIR}/auralis-api-zap-report.json"
+                    echo "ZAP API container output directory:"
+                    ls -lah "${ZAP_API_OUTPUT}"
+
+                    test -s "${ZAP_API_OUTPUT}/auralis-api-zap-report.html"
+                    test -s "${ZAP_API_OUTPUT}/auralis-api-zap-report.json"
+
+                    cp "${ZAP_API_OUTPUT}/auralis-api-zap-report.html" "${ZAP_DIR}/"
+                    cp "${ZAP_API_OUTPUT}/auralis-api-zap-report.json" "${ZAP_DIR}/"
 
                     echo "Generated API DAST reports:"
                     ls -lah "${ZAP_DIR}"
+
+                    test -s "${ZAP_DIR}/auralis-api-zap-report.html"
+                    test -s "${ZAP_DIR}/auralis-api-zap-report.json"
                 '''
             }
         }
